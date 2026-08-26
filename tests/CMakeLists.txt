@@ -131,3 +131,12 @@ target_include_directories(test_package PRIVATE
 )
 target_link_libraries(test_package PRIVATE eos_pkg eos_core)
 add_test(NAME test_package COMMAND test_package)
+
+# --- test_devicetree: Flattened device tree parser ---
+add_executable(test_devicetree test_devicetree.c)
+target_link_libraries(test_devicetree PRIVATE eos_devicetree)
+add_test(NAME test_devicetree COMMAND test_devicetree)
+
+# --- Fuzz targets ---
+# Opt-in (-DEOS_ENABLE_FUZZING=ON, Clang only); the subdirectory guards itself.
+add_subdirectory(fuzz)
