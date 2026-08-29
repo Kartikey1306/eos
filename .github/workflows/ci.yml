@@ -2,10 +2,10 @@ name: CI — eos
 
 on:
   push:
-    branches: [main, develop]
+    branches: [master, main, develop]
     tags: ["v*"]
   pull_request:
-    branches: [main]
+    branches: [master, main]
 
 # Every other workflow in this repo declares a concurrency group; ci.yml,
 # the heaviest one, did not. Pushing twice to a PR left the earlier run
@@ -90,7 +90,7 @@ jobs:
         run: |
           cmake -B build/arm -G Ninja \
             -DCMAKE_BUILD_TYPE=$BUILD_TYPE \
-            -DCMAKE_TOOLCHAIN_FILE=toolchains/arm-cortex-m4.cmake \
+            -DCMAKE_TOOLCHAIN_FILE=cmake/arm-cortex-m4.cmake \
             -DEOS_BUILD_TESTS=OFF
 
       - name: Build (ARM)
