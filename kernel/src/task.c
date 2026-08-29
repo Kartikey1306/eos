@@ -194,12 +194,13 @@ static void idle_task_func(void *arg)
         /* WFI — wait for interrupt, saves power */
 #if defined(__ARM_ARCH)
         __asm volatile ("wfi");
-#elif defined(__x86_64__) || defined(_M_X64)
-        __asm volatile ("hlt");
 #elif defined(__riscv)
         __asm volatile ("wfi");
+#elif (defined(__x86_64__) || defined(_M_X64)) && !defined(_WIN32) && \
+      !defined(__STDC_HOSTED__)
+        __asm volatile ("hlt");
 #else
-        /* Host/simulation: just spin */
+        /* Hosted host/simulation: just spin */
         volatile int dummy = 0;
         (void)dummy;
 #endif
