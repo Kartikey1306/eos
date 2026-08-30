@@ -73,16 +73,6 @@ add_executable(test_crypto_sha512 test_crypto_sha512.c)
 target_link_libraries(test_crypto_sha512 PRIVATE eos_crypto)
 add_test(NAME test_crypto_sha512 COMMAND test_crypto_sha512)
 
-# --- test_crypto_aes: AES-128/192/256 ECB + CBC, NIST FIPS-197 / SP 800-38A ---
-add_executable(test_crypto_aes test_crypto_aes.c)
-target_link_libraries(test_crypto_aes PRIVATE eos_crypto)
-add_test(NAME test_crypto_aes COMMAND test_crypto_aes)
-
-# --- test_crypto_sha512: SHA-512 against NIST vectors ---
-add_executable(test_crypto_sha512 test_crypto_sha512.c)
-target_link_libraries(test_crypto_sha512 PRIVATE eos_crypto)
-add_test(NAME test_crypto_sha512 COMMAND test_crypto_sha512)
-
 # --- test_security: Keystore, ACL ---
 add_executable(test_security test_security.c)
 target_link_libraries(test_security PRIVATE eos_security eos_crypto)
@@ -147,6 +137,13 @@ add_test(NAME test_power COMMAND test_power)
 # --- test_net: Networking abstraction ---
 add_executable(test_net test_net.c)
 target_link_libraries(test_net PRIVATE eos_net)
+# The POSIX round-trip cases need the same switch the library was built with,
+# plus pthreads for the listener they connect to.
+if(NOT CMAKE_CROSSCOMPILING)
+    target_compile_definitions(test_net PRIVATE EOS_NET_POSIX=1)
+    find_package(Threads REQUIRED)
+    target_link_libraries(test_net PRIVATE Threads::Threads)
+endif()
 add_test(NAME test_net COMMAND test_net)
 
 # --- test_motor_ctrl: Motor control PID ---
