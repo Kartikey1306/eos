@@ -83,6 +83,7 @@ jobs:
           cmake -B build_ci -S . \
             -DCMAKE_TOOLCHAIN_FILE=toolchains/aarch64-linux-gnu.cmake \
             -DEBLDR_BOARD=qemu_arm64 \
+            -DEBLDR_VERIFY_STAGE1=OFF \
             -DCMAKE_BUILD_TYPE=Release
           cmake --build build_ci --parallel $(nproc)
           echo "eBoot artifacts:"
