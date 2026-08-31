@@ -23,7 +23,8 @@
  * directly without CMake. Keying on __linux__ alone meant a macOS host build
  * compiled this file to an empty translation unit and then had no backend at
  * all. */
-#if defined(EOS_HAL_BACKEND_HOST) || defined(__linux__)
+#include "eos/hal.h"
+#if EOS_HAL_HOSTED
 
 #include <unistd.h>
 #include <fcntl.h>
@@ -287,4 +288,4 @@ void eos_hal_linux_register(void)
     eos_hal_register_backend(&linux_backend);
 }
 
-#endif /* EOS_HAL_BACKEND_HOST || __linux__ */
+#endif /* EOS_HAL_HOSTED */

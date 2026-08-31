@@ -50,6 +50,17 @@ int eos_hal_init(void);
  * registrar CMake had compiled for it on a non-Linux host, and a declaration
  * that is never referenced costs nothing.
  */
+/* EOS_HAL_HOSTED: this translation unit is being compiled against a hosted
+ * POSIX environment (Linux, macOS, BSDs), as opposed to bare metal. The ARM
+ * Cortex-M cross build also compiles hal_linux.c -- EOS_PLATFORM defaults to
+ * "linux" there -- and relies on this evaluating to 0 so that file stays an
+ * empty translation unit; arm-none-eabi defines none of these macros. */
+#if defined(__linux__) || (defined(EOS_HAL_BACKEND_HOST) && (defined(__unix__) || defined(__APPLE__)))
+#define EOS_HAL_HOSTED 1
+#else
+#define EOS_HAL_HOSTED 0
+#endif
+
 void eos_hal_linux_register(void);
 void eos_hal_rtos_register(void);
 

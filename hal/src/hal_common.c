@@ -44,11 +44,7 @@ int eos_hal_init(void)
          * that picks the backend file, so this cannot select a register
          * function whose definition was not compiled. Testing __linux__ here
          * did exactly that on every non-Linux host build. */
-#if defined(EOS_HAL_BACKEND_HOST)
-        eos_hal_linux_register();
-#elif defined(EOS_HAL_BACKEND_RTOS)
-        eos_hal_rtos_register();
-#elif defined(__linux__)
+#if EOS_HAL_HOSTED
         eos_hal_linux_register();
 #else
         eos_hal_rtos_register();
