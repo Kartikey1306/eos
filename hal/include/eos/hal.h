@@ -44,14 +44,14 @@ int eos_hal_init(void);
  * layers on top of the platform backend needs to name it, and because an
  * undeclared registrar is one nobody can find.
  *
- * Exactly one of these is compiled: hal_linux.c is guarded on __linux__ and
- * hal_rtos.c on its absence.
+ * Exactly one of these is *defined* in a given build -- CMake compiles either
+ * hal_linux.c or hal_rtos.c -- but both are declared unconditionally. Guarding
+ * the declarations on __linux__ meant hal_common.c could not even name the
+ * registrar CMake had compiled for it on a non-Linux host, and a declaration
+ * that is never referenced costs nothing.
  */
-#ifdef __linux__
 void eos_hal_linux_register(void);
-#else
 void eos_hal_rtos_register(void);
-#endif
 
 /**
  * Deinitialize the HAL subsystem, releasing all resources.
