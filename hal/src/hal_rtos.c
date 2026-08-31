@@ -13,7 +13,7 @@
 #include <eos/hal.h>
 #include <string.h>
 
-#if !defined(__linux__)
+#if !defined(EOS_HAL_BACKEND_HOST) && !defined(__linux__)
 
 #define REG32(addr) (*(volatile uint32_t *)(addr))
 
