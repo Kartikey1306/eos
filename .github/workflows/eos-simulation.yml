@@ -168,6 +168,7 @@ jobs:
             -m 512M \
             -serial file:eos_serial.log \
             -display none \
+            -nic none \
             -kernel eos_qemu.bin \
             -no-reboot 2>qemu_stderr.log || rc=$?
           echo "qemu exit code: ${rc}"
