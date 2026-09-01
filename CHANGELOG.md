@@ -3,7 +3,10 @@
 ## [Unreleased]
 
 ### Fixed
-- **Build:** `cmake -B build/host -DEOS_BUILD_TESTS=ON` failed at configure time. `tests/CMakeLists.txt` declared `test_crypto_aes` and `test_crypto_sha512` twice each, and a duplicate `add_executable`/`add_test` name is a hard CMake error, so no test target could be generated at all.
+- **`eos_pkg` trust anchor:** Package signatures were checked against `eos_pkg_public_key[32] = {0}`. #99 stopped that all-zero key accepting every package, which left it rejecting every package -- including correctly signed ones -- while reporting `signature verification failed`, blaming the package for a key that was never provisioned. The key now comes from `eos_pkg_set_trust_anchor()` or from `EOS_PKG_TRUST_ANCHOR_HEX` at build time; with neither, verification refuses and says so, unless the build defines `EOS_ALLOW_UNSIGNED_PKG`. Closes the second half of #98.
+- **`services/pkg` is compiled.** `services/pkg/eos_pkg.c` was in no `CMakeLists.txt`, so no target built it and no test could reach it -- which is how the all-zero anchor survived. It is now the `eos_eapp` library, with `tests/test_pkg_trust_anchor.c` covering it.
+- **`ed25519_public_key_is_usable()`:** #99's subgroup and identity checks are exported, so a stored trust anchor can be rejected when it is configured rather than once per package as an apparent signature failure.
+- **`eos_queue_send` / `eos_queue_receive`:** A full send/recv waiter table now returns `EOS_KERN_NO_MEMORY` instead of blocking a task that can never be woken, matching mutex and semaphore behavior.
 - **`eos_queue_create`:** Size check now uses division so `item_size * capacity` cannot wrap `size_t` on 32-bit targets and overflow the 1024-byte queue store.
 - **`eos_sem_create`:** Reject `initial > max` and `max` values that do not fit in `int32_t`, so the counting-semaphore invariant cannot be created already broken.
 - **`eos_mutex_lock`:** Recursive lock returns `EOS_KERN_FULL` at `uint8_t` saturation instead of wrapping `rec_count` to 0 and leaving the mutex stuck.
