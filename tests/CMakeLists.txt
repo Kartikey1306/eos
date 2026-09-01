@@ -95,6 +95,12 @@ add_executable(test_crypto_ed25519_loworder test_crypto_ed25519_loworder.c)
 target_link_libraries(test_crypto_ed25519_loworder PRIVATE eos_crypto)
 add_test(NAME test_crypto_ed25519_loworder COMMAND test_crypto_ed25519_loworder)
 
+# --- test_ed25519_contract: the corpus shared byte-for-byte with eBoot ---
+add_executable(test_ed25519_contract test_ed25519_contract.c)
+target_link_libraries(test_ed25519_contract PRIVATE eos_crypto)
+target_include_directories(test_ed25519_contract PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+add_test(NAME test_ed25519_contract COMMAND test_ed25519_contract)
+
 # --- test_crypto_sha512: SHA-512 against NIST vectors ---
 add_executable(test_crypto_sha512 test_crypto_sha512.c)
 target_link_libraries(test_crypto_sha512 PRIVATE eos_crypto)
