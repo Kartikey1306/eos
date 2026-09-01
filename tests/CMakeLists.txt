@@ -218,9 +218,13 @@ endif()
 add_test(NAME test_motor_ctrl COMMAND test_motor_ctrl)
 
 # --- test_pkg_trust_anchor: eos_pkg refuses to verify without a real key ---
-add_executable(test_pkg_trust_anchor test_pkg_trust_anchor.c)
-target_link_libraries(test_pkg_trust_anchor PRIVATE eos_eapp eos_crypto)
-add_test(NAME test_pkg_trust_anchor COMMAND test_pkg_trust_anchor)
+# eos_eapp exists only in a host build; see the comment on services/pkg in the
+# top-level CMakeLists.txt.
+if(NOT CMAKE_CROSSCOMPILING)
+    add_executable(test_pkg_trust_anchor test_pkg_trust_anchor.c)
+    target_link_libraries(test_pkg_trust_anchor PRIVATE eos_eapp eos_crypto)
+    add_test(NAME test_pkg_trust_anchor COMMAND test_pkg_trust_anchor)
+endif()
 
 # --- test_package: Package management ---
 add_executable(test_package test_package.c)
