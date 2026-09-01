@@ -80,12 +80,23 @@ def carr(b):
     return ",".join("0x%02x" % x for x in b)
 
 def main():
+    # The vectors are generated into the build tree rather than committed:
+    # this file is the only copy either repo carries, and the header it emits
+    # is 54 KB of generated data that used to be checked in to both.
+    out = sys.stdout
+    argv = sys.argv[1:]
+    if len(argv) == 2 and argv[0] in ("-o", "--output"):
+        out = open(argv[1], "w", newline="\n")
+    elif argv:
+        sys.stderr.write("usage: gen_ed25519_contract_vectors.py [-o OUTPUT]\n")
+        return 2
+
     vs = vectors()
     digest_src = b"".join(pk + sig + msg + bytes([exp]) for _, pk, sig, msg, exp, _ in vs)
     digest = hashlib.sha256(digest_src).hexdigest()
     max_msg = max(len(m) for _, _, _, m, _, _ in vs)
 
-    w = sys.stdout.write
+    w = out.write
     w("/* SPDX-License-Identifier: MIT\n")
     w(" * Copyright (c) 2026 EoS Project\n */\n\n")
     w("/* GENERATED FILE -- do not edit by hand.\n")
@@ -125,6 +136,9 @@ def main():
     w("#endif /* EOS_ED25519_CONTRACT_VECTORS_H */\n")
     sys.stderr.write("vectors: %d  accept: %d  reject: %d\ndigest: %s\n" % (
         len(vs), sum(v[4] for v in vs), sum(1 for v in vs if not v[4]), digest))
+    if out is not sys.stdout:
+        out.close()
+    return 0
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main() or 0)
