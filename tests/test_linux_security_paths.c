@@ -58,6 +58,51 @@ static void test_dmverity_verify_refuses_hostile_paths(void) {
     printf("[PASS] dmverity_verify refuses hostile image paths\n");
 }
 
+/* The two dmverity refusal tests above assert a non-zero return, which does
+ * not discriminate on a host without veritysetup: system() returns non-zero
+ * either way, so they pass against the unfixed file too. CI installs no
+ * veritysetup, so that is every CI run.
+ *
+ * This one does discriminate anywhere, by watching for the side effect. The
+ * injected command creates a sentinel file; if the guard refuses the path the
+ * command is never built and the sentinel cannot appear. On the unfixed file
+ * the backtick survives is_path_safe(), the shell runs it, and the file
+ * exists. */
+static void test_injection_does_not_execute(void) {
+    char dir[] = "/tmp/eos_lsp_inj_XXXXXX";
+    char sentinel[320], hostile[512];
+    EosDmVerity dv;
+    EosIma ima;
+
+    if (!mkdtemp(dir)) { fprintf(stderr, "[SKIP] mkdtemp failed\n"); return; }
+    snprintf(sentinel, sizeof sentinel, "%s/pwned", dir);
+
+    /* A path carrying a command substitution that would create the sentinel. */
+    snprintf(hostile, sizeof hostile, "/tmp/img`touch %s`", sentinel);
+
+    eos_dmverity_init(&dv);
+    strncpy(dv.hash_device, "/tmp/hash.img", sizeof(dv.hash_device) - 1);
+    strncpy(dv.root_hash, "abcdef0123456789", sizeof(dv.root_hash) - 1);
+    (void)eos_dmverity_verify(&dv, hostile);
+    CHECK(access(sentinel, F_OK) != 0);
+
+    eos_dmverity_init(&dv);
+    (void)eos_dmverity_create(&dv, hostile, "/tmp/hash.img");
+    CHECK(access(sentinel, F_OK) != 0);
+
+    eos_ima_init(&ima, EOS_IMA_ENFORCE);
+    strncpy(ima.key_file, "/tmp/key.pub", sizeof(ima.key_file) - 1);
+    (void)eos_ima_sign_file(&ima, hostile);
+    CHECK(access(sentinel, F_OK) != 0);
+
+    if (access(sentinel, F_OK) == 0) {
+        fprintf(stderr, "[FAIL] the injected command executed: %s exists\n", sentinel);
+        remove(sentinel);
+    }
+    rmdir(dir);
+    printf("[PASS] an injected command substitution never executes\n");
+}
+
 static void test_dmverity_verify_refuses_hostile_hash_device(void) {
     EosDmVerity dv;
     eos_dmverity_init(&dv);
@@ -149,6 +194,7 @@ static void test_ordinary_paths_still_reach_the_shell(void) {
 int main(void) {
     test_dmverity_verify_refuses_hostile_paths();
     test_dmverity_verify_refuses_hostile_hash_device();
+    test_injection_does_not_execute();
     test_dmverity_create_refuses_hostile_paths();
     test_busybox_refuses_hostile_fields();
     test_ima_sign_refuses_hostile_paths();
