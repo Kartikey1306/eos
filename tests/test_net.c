@@ -209,17 +209,17 @@ static void test_net_tcp_round_trip(void) {
         ts.tv_nsec = 5 * 1000 * 1000;
         nanosleep(&ts, NULL);
     }
-    CHECK(ready == 1);
+    assert(ready == 1);
     eos_socket_t c = eos_net_socket(EOS_NET_TCP);
     eos_net_addr_t addr;
     addr.ip = inet_addr("127.0.0.1");
     addr.port = g_test_port;
-    CHECK(eos_net_connect(c, &addr) == 0);
-    CHECK(eos_net_send(c, "ping", 4) == 4);
+    assert(eos_net_connect(c, &addr) == 0);
+    assert(eos_net_send(c, "ping", 4) == 4);
     char buf[32];
     memset(buf, 0, sizeof(buf));
-    CHECK(eos_net_recv(c, buf, sizeof(buf) - 1, 2000) == 4);
-    CHECK(strcmp(buf, "ping") == 0);
+    assert(eos_net_recv(c, buf, sizeof(buf) - 1, 2000) == 4);
+    assert(strcmp(buf, "ping") == 0);
     eos_net_close(c);
     pthread_join(t, NULL);
     eos_net_deinit();
@@ -229,13 +229,13 @@ static void test_net_tcp_round_trip(void) {
 static void test_net_resolve_localhost(void) {
     eos_net_init();
     uint32_t ip = 0;
-    CHECK(eos_net_resolve("localhost", &ip) == 0);
-    CHECK(ip == inet_addr("127.0.0.1"));
+    assert(eos_net_resolve("localhost", &ip) == 0);
+    assert(ip == inet_addr("127.0.0.1"));
     /* A name that cannot resolve must fail rather than reporting success and
      * leaving the caller with whatever was in the output already. */
     uint32_t before = ip;
-    CHECK(eos_net_resolve("no.such.host.invalid", &ip) == -1);
-    CHECK(ip == before);
+    assert(eos_net_resolve("no.such.host.invalid", &ip) == -1);
+    assert(ip == before);
     eos_net_deinit();
     PASS("net resolve localhost");
 }
@@ -246,7 +246,7 @@ static void test_net_connect_refused(void) {
     eos_net_addr_t addr;
     addr.ip = inet_addr("127.0.0.1");
     addr.port = 1;              /* nothing listens on port 1 */
-    CHECK(eos_net_connect(c, &addr) != 0);
+    assert(eos_net_connect(c, &addr) != 0);
     eos_net_close(c);
     eos_net_deinit();
     PASS("net connect to a closed port fails");
