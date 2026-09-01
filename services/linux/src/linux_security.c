@@ -43,14 +43,43 @@ int eos_selinux_set_policy(EosSelinux *se, const char *policy_dir,
     return -1;
 }
 
+/* Reject anything a shell reads as syntax rather than as text.
+ *
+ * The previous list -- ;|&><$()\"' -- missed two that matter. A backtick is
+ * command substitution in every POSIX shell, so /tmp/`id` passed as safe and
+ * ran id. A newline ends one command and starts another, so a path could
+ * append a whole second command. Both were reported SAFE. Control characters
+ * and backslash are rejected for the same reason.
+ *
+ * A NULL path returned 1 -- "safe" -- which is the wrong default for a
+ * predicate guarding command construction. It returns 0 now; every caller
+ * here treats 0 as refuse. */
 static int is_path_safe(const char *path) {
-    if (!path) return 1;
-    if (strpbrk(path, ";|&><$()\"'")) return 0;
+    const unsigned char *p;
+    if (!path) return 0;
+    for (p = (const unsigned char *)path; *p; p++) {
+        if (*p < 0x20 || *p == 0x7f) return 0;
+        if (strchr(";|&><$()\"'`\\", (char)*p)) return 0;
+    }
+    return 1;
+}
+
+/* Two busybox call sites interpolate without surrounding quotes
+ * (`make -C "%s" %s` and ` CROSS_COMPILE=%s`), where a single space is
+ * already enough to turn one argument into two. Those use this instead. */
+static int is_word_safe(const char *word) {
+    const unsigned char *p;
+    if (!is_path_safe(word)) return 0;
+    for (p = (const unsigned char *)word; *p; p++) {
+        if (*p == ' ' || *p == '\t' || *p == '*' || *p == '?' || *p == '~') return 0;
+    }
     return 1;
 }
 
 int eos_selinux_install_to_rootfs(const EosSelinux *se, const char *rootfs_dir) {
-    if (!is_path_safe(se->policy_dir) || !is_path_safe(se->policy_name)) {
+    /* rootfs_dir reaches the cp below through `path`; it was unchecked. */
+    if (!is_path_safe(se->policy_dir) || !is_path_safe(se->policy_name) ||
+        !is_path_safe(rootfs_dir)) {
         return -1;
     }
     char path[1024];
@@ -137,6 +166,7 @@ int eos_ima_set_key(EosIma *ima, const char *key_file) {
 }
 
 int eos_ima_install_to_rootfs(const EosIma *ima, const char *rootfs_dir) {
+    if (!is_path_safe(rootfs_dir) || !is_path_safe(ima->key_file)) return -1;
     if (ima->mode == EOS_IMA_OFF) return 0;
 
     char path[1024];
@@ -182,6 +212,8 @@ int eos_ima_install_to_rootfs(const EosIma *ima, const char *rootfs_dir) {
 
 int eos_ima_sign_file(const EosIma *ima, const char *file_path) {
     if (!ima->key_file[0]) return -1;
+    if (!is_path_safe(file_path) || !is_path_safe(ima->key_file) ||
+        !is_word_safe(ima->algo)) return -1;
 #ifndef _WIN32
     char cmd[2048];
     snprintf(cmd, sizeof(cmd),
@@ -226,6 +258,8 @@ void eos_dmverity_init(EosDmVerity *dv) {
 
 int eos_dmverity_create(EosDmVerity *dv, const char *image_path,
                         const char *hash_output) {
+    if (!is_path_safe(image_path) || !is_path_safe(hash_output) ||
+        !is_word_safe(dv->hash_algo)) return -1;
     strncpy(dv->data_device, image_path, sizeof(dv->data_device) - 1);
     strncpy(dv->hash_device, hash_output, sizeof(dv->hash_device) - 1);
 
@@ -301,6 +335,11 @@ int eos_dmverity_generate_kernel_params(const EosDmVerity *dv,
 }
 
 int eos_dmverity_verify(EosDmVerity *dv, const char *image_path) {
+    if (!is_path_safe(image_path) || !is_path_safe(dv->hash_device) ||
+        !is_word_safe(dv->root_hash)) {
+        dv->verified = 0;
+        return -1;
+    }
 #ifndef _WIN32
     char cmd[2048];
     snprintf(cmd, sizeof(cmd),
@@ -479,6 +518,8 @@ int eos_busybox_add_network_set(EosBusybox *bb) {
 }
 
 int eos_busybox_configure(EosBusybox *bb) {
+    if (!is_path_safe(bb->source_dir) || !is_word_safe(bb->defconfig) ||
+        !is_word_safe(bb->cross_compile)) return -1;
     if (!bb->source_dir[0]) {
         snprintf(bb->source_dir, sizeof(bb->source_dir),
                  ".eos/build/src/busybox-%s", bb->version);
@@ -503,6 +544,7 @@ int eos_busybox_configure(EosBusybox *bb) {
 }
 
 int eos_busybox_build(EosBusybox *bb) {
+    if (!is_path_safe(bb->source_dir) || !is_word_safe(bb->cross_compile)) return -1;
 #ifndef _WIN32
     char cmd[2048];
     int offset = snprintf(cmd, sizeof(cmd), "make -C \"%s\" -j4", bb->source_dir);
@@ -518,6 +560,7 @@ int eos_busybox_build(EosBusybox *bb) {
 }
 
 int eos_busybox_install_to_rootfs(const EosBusybox *bb, const char *rootfs_dir) {
+    if (!is_path_safe(bb->source_dir) || !is_path_safe(rootfs_dir)) return -1;
 #ifndef _WIN32
     char cmd[2048];
     if (bb->source_dir[0]) {
