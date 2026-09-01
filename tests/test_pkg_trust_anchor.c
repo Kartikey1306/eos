@@ -22,9 +22,12 @@
  * CMakeLists -- which is why none of this was reachable by a test.
  */
 
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 #include "eos_pkg.h"
 #include <eos/crypto.h>
@@ -125,7 +128,14 @@ static void write_eapp(const char *path,
     eos_sha256_update(&c, payload, payload_len);
     eos_sha256_final(&c, h.hash);
 
-    f = fopen(path, "wb");
+    /* Create with 0600 rather than fopen()'s 0666 & ~umask. These fixtures
+     * are the signed packages the verifier is about to trust, so a
+     * world-writable one lets anything on the box rewrite the payload
+     * between the write here and the read under test. */
+    int fd = open(path, O_CREAT | O_WRONLY | O_TRUNC, S_IRUSR | S_IWUSR);
+    ASSERT(fd >= 0);
+    f = fdopen(fd, "wb");
+    if (!f) close(fd);
     ASSERT(f != NULL);
     ASSERT(fwrite(&h, sizeof(h), 1, f) == 1);
     ASSERT(fwrite(payload, 1, payload_len, f) == payload_len);
