@@ -1,3 +1,22 @@
+# ---------------------------------------------------------------------------
+# Assertions must be live in test binaries.
+#
+# These suites express nearly every check as assert(). CI configures
+# -DCMAKE_BUILD_TYPE=Release, Release defines NDEBUG, and NDEBUG deletes
+# assert() together with the expression inside it -- so 684 assertions across
+# 16 files compiled to nothing and every one of those tests passed by
+# reaching the end of main().
+#
+# That is not theoretical: test_net wrapped its connect/send calls in
+# assert(), so under Release no client ever connected, the echo thread blocked
+# in accept() forever, and the suite hung until ctest killed it.
+#
+# Stripping NDEBUG from test targets only -- not from the libraries under
+# test, which stay exactly as CI builds them for release -- keeps every
+# existing assert() meaningful without rewriting 684 call sites.
+# ---------------------------------------------------------------------------
+add_compile_options(-UNDEBUG)
+
 # EoS Unit Tests
 # --- test_board_configs: Board YAML schema shape ---
 add_executable(test_board_configs test_board_configs.c)
