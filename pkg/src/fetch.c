@@ -209,6 +209,19 @@ EosResult eos_fetch_source(const char *url, const char *dest_dir,
         return EOS_ERR_FETCH;
     }
 
+    /* An archive with no expected digest is an unverified download. The
+     * check below ran only "if (expected_hash && expected_hash[0])", so
+     * omitting one argument bought a download that was extracted with
+     * nothing compared against it -- and the caller cannot tell that apart
+     * from a verified fetch, because both return EOS_OK. Refuse here,
+     * before the network is touched. Git URLs are exempt: a clone carries
+     * its own object hashes. */
+    if (is_tarball(url) && !(expected_hash && expected_hash[0])) {
+        EOS_ERROR("Refusing to fetch %s: no expected SHA-256 was given, so "
+                  "the download cannot be verified against anything.", url);
+        return EOS_ERR_CHECKSUM;
+    }
+
     /* Determine archive path for checksum verification */
     char archive_path[EOS_MAX_PATH] = {0};
     if (is_tarball(url)) {
