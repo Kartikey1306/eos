@@ -56,19 +56,22 @@ add_executable(test_crypto test_crypto.c)
 target_link_libraries(test_crypto PRIVATE eos_crypto)
 add_test(NAME test_crypto COMMAND test_crypto)
 
-# --- test_crypto_aes / _ecc / _rsa / _sha512: were sitting in tests/ unused ---
+# --- test_crypto_aes: AES-128/192/256 ECB + CBC, NIST FIPS-197 / SP 800-38A ---
 add_executable(test_crypto_aes test_crypto_aes.c)
 target_link_libraries(test_crypto_aes PRIVATE eos_crypto)
 add_test(NAME test_crypto_aes COMMAND test_crypto_aes)
 
+# --- test_crypto_ecc: ECC point arithmetic and ECDSA ---
 add_executable(test_crypto_ecc test_crypto_ecc.c)
 target_link_libraries(test_crypto_ecc PRIVATE eos_crypto)
 add_test(NAME test_crypto_ecc COMMAND test_crypto_ecc)
 
+# --- test_crypto_rsa: RSA modular exponentiation and verify ---
 add_executable(test_crypto_rsa test_crypto_rsa.c)
 target_link_libraries(test_crypto_rsa PRIVATE eos_crypto)
 add_test(NAME test_crypto_rsa COMMAND test_crypto_rsa)
 
+# --- test_crypto_sha512: SHA-512 against NIST vectors ---
 add_executable(test_crypto_sha512 test_crypto_sha512.c)
 target_link_libraries(test_crypto_sha512 PRIVATE eos_crypto)
 add_test(NAME test_crypto_sha512 COMMAND test_crypto_sha512)
@@ -105,6 +108,14 @@ add_test(NAME test_filesystem COMMAND test_filesystem)
 add_executable(test_service test_service.c)
 target_link_libraries(test_service PRIVATE eos_service)
 add_test(NAME test_service COMMAND test_service)
+
+# --- test_gps: GPS NMEA sentence parsing ---
+add_executable(test_gps test_gps.c)
+target_link_libraries(test_gps PRIVATE eos_gps)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(test_gps PRIVATE m)
+endif()
+add_test(NAME test_gps COMMAND test_gps)
 
 # --- test_debug: GDB stub + core dump ---
 add_executable(test_debug test_debug.c)
