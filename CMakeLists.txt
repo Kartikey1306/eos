@@ -144,6 +144,7 @@ add_subdirectory(systems)
 # Services — crypto, security, os, linux, rtos, sensor, motor, ota, fs
 # ====================================================================
 add_subdirectory(services)
+add_subdirectory(services/pkg)
 add_subdirectory(pkg)
 
 
