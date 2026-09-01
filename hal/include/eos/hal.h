@@ -44,14 +44,25 @@ int eos_hal_init(void);
  * layers on top of the platform backend needs to name it, and because an
  * undeclared registrar is one nobody can find.
  *
- * Exactly one of these is compiled: hal_linux.c is guarded on __linux__ and
- * hal_rtos.c on its absence.
+ * Exactly one of these is *defined* in a given build -- CMake compiles either
+ * hal_linux.c or hal_rtos.c -- but both are declared unconditionally. Guarding
+ * the declarations on __linux__ meant hal_common.c could not even name the
+ * registrar CMake had compiled for it on a non-Linux host, and a declaration
+ * that is never referenced costs nothing.
  */
-#ifdef __linux__
-void eos_hal_linux_register(void);
+/* EOS_HAL_HOSTED: this translation unit is being compiled against a hosted
+ * POSIX environment (Linux, macOS, BSDs), as opposed to bare metal. The ARM
+ * Cortex-M cross build also compiles hal_linux.c -- EOS_PLATFORM defaults to
+ * "linux" there -- and relies on this evaluating to 0 so that file stays an
+ * empty translation unit; arm-none-eabi defines none of these macros. */
+#if defined(__linux__) || (defined(EOS_HAL_BACKEND_HOST) && (defined(__unix__) || defined(__APPLE__)))
+#define EOS_HAL_HOSTED 1
 #else
-void eos_hal_rtos_register(void);
+#define EOS_HAL_HOSTED 0
 #endif
+
+void eos_hal_linux_register(void);
+void eos_hal_rtos_register(void);
 
 /**
  * Deinitialize the HAL subsystem, releasing all resources.

@@ -40,7 +40,11 @@ int eos_hal_init(void)
      * it, and so does one that deliberately registers NULL: the default only
      * fills a slot nobody has set. */
     if (!active_backend && !backend_chosen) {
-#ifdef __linux__
+        /* EOS_HAL_BACKEND_* is set by CMake next to the target_sources() call
+         * that picks the backend file, so this cannot select a register
+         * function whose definition was not compiled. Testing __linux__ here
+         * did exactly that on every non-Linux host build. */
+#if EOS_HAL_HOSTED
         eos_hal_linux_register();
 #else
         eos_hal_rtos_register();
