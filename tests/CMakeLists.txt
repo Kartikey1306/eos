@@ -100,6 +100,31 @@ add_executable(test_crypto_sha512 test_crypto_sha512.c)
 target_link_libraries(test_crypto_sha512 PRIVATE eos_crypto)
 add_test(NAME test_crypto_sha512 COMMAND test_crypto_sha512)
 
+# --- test_mpu_validate: MPU region programmability ---
+# Landed with the fix it guards (#109) and lost its registration to a merge,
+# so the six cases stopped being compiled while the file stayed in the tree.
+add_executable(test_mpu_validate test_mpu_validate.c)
+target_link_libraries(test_mpu_validate PRIVATE eos_rtos_security)
+add_test(NAME test_mpu_validate COMMAND test_mpu_validate)
+
+# --- test_e2e: kernel boot-to-task end-to-end path ---
+add_executable(test_e2e test_e2e.c)
+target_link_libraries(test_e2e PRIVATE eos_kernel)
+add_test(NAME test_e2e COMMAND test_e2e)
+
+# --- test_net_mock: eNet socket API against a mock transport ---
+add_executable(test_net_mock test_net_mock.c)
+add_test(NAME test_net_mock COMMAND test_net_mock)
+
+# --- test_hal_stm32f4: STM32F4 peripheral register behaviour ---
+# Builds on the host against the simulated register block; it needed only the
+# board header directory on the include path, which is why it never ran.
+add_executable(test_hal_stm32f4 test_hal_stm32f4.c)
+target_include_directories(test_hal_stm32f4 PRIVATE
+    ${CMAKE_SOURCE_DIR}/boards/stm32f407_discovery)
+target_link_libraries(test_hal_stm32f4 PRIVATE eos_hal)
+add_test(NAME test_hal_stm32f4 COMMAND test_hal_stm32f4)
+
 # --- test_security: Keystore, ACL ---
 add_executable(test_security test_security.c)
 target_link_libraries(test_security PRIVATE eos_security eos_crypto)
