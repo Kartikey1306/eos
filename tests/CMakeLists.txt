@@ -73,6 +73,11 @@ add_executable(test_crypto_sha512 test_crypto_sha512.c)
 target_link_libraries(test_crypto_sha512 PRIVATE eos_crypto)
 add_test(NAME test_crypto_sha512 COMMAND test_crypto_sha512)
 
+# --- test_mpu_validate: MPU region programmability ---
+add_executable(test_mpu_validate test_mpu_validate.c)
+target_link_libraries(test_mpu_validate PRIVATE eos_rtos_security)
+add_test(NAME test_mpu_validate COMMAND test_mpu_validate)
+
 # --- test_security: Keystore, ACL ---
 add_executable(test_security test_security.c)
 target_link_libraries(test_security PRIVATE eos_security eos_crypto)
