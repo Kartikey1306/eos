@@ -25,6 +25,15 @@
 
 #include "eos/net.h"
 
+/* eos/net.h puts every eNet declaration behind EOS_ENABLE_NET, but this
+ * file is in eos_net's source list unconditionally. Built without the
+ * feature -- which is the default configuration, since CMakeLists.txt only
+ * defines EOS_ENABLE_NET for the test build -- the header contributed no
+ * types and every definition below failed with "unknown type name
+ * eos_socket_t". Guarding the body compiles it away instead, which is what
+ * a disabled feature is supposed to do. */
+#if EOS_ENABLE_NET
+
 #include <errno.h>
 #include <netdb.h>
 #include <netinet/in.h>
@@ -203,3 +212,5 @@ int eos_net_resolve(const char *hostname, uint32_t *ip)
     freeaddrinfo(res);
     return 0;
 }
+
+#endif /* EOS_ENABLE_NET */
