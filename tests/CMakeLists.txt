@@ -217,6 +217,11 @@ if(UNIX AND NOT APPLE)
 endif()
 add_test(NAME test_motor_ctrl COMMAND test_motor_ctrl)
 
+# --- test_pkg_trust_anchor: eos_pkg refuses to verify without a real key ---
+add_executable(test_pkg_trust_anchor test_pkg_trust_anchor.c)
+target_link_libraries(test_pkg_trust_anchor PRIVATE eos_eapp eos_crypto)
+add_test(NAME test_pkg_trust_anchor COMMAND test_pkg_trust_anchor)
+
 # --- test_package: Package management ---
 add_executable(test_package test_package.c)
 target_include_directories(test_package PRIVATE
