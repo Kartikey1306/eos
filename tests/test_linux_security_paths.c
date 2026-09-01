@@ -17,6 +17,8 @@
 #include <string.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <fcntl.h>
+#include <sys/stat.h>
 
 static int failures;
 
@@ -113,14 +115,23 @@ static void test_ordinary_paths_still_reach_the_shell(void) {
     char dir[] = "/tmp/eos_lsp_XXXXXX";
     char mk[256], sentinel[256];
     FILE *f;
+    int fd;
     EosBusybox bb;
 
     if (!mkdtemp(dir)) { fprintf(stderr, "[SKIP] mkdtemp failed\n"); return; }
     snprintf(mk, sizeof mk, "%s/Makefile", dir);
     snprintf(sentinel, sizeof sentinel, "%s/ran", dir);
-    f = fopen(mk, "w");
+    /* open(O_CREAT, 0600) rather than fopen("w"): fopen creates with 0666
+     * masked by umask, so on a permissive umask this Makefile would be
+     * world-writable -- and it is a file whose contents get executed. */
+    fd = open(mk, O_WRONLY | O_CREAT | O_EXCL, S_IRUSR | S_IWUSR);
+    CHECK(fd >= 0);
+    if (fd < 0) { rmdir(dir); return; }
+    f = fdopen(fd, "w");
     CHECK(f != NULL);
-    if (f) { fprintf(f, "defconfig:\n\t@touch ran\n"); fclose(f); }
+    if (!f) { close(fd); rmdir(dir); return; }
+    fprintf(f, "defconfig:\n\t@touch ran\n");
+    fclose(f);
 
     eos_busybox_init(&bb);
     strncpy(bb.source_dir, dir, sizeof(bb.source_dir) - 1);
