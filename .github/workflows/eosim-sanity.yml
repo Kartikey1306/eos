@@ -113,7 +113,11 @@ jobs:
           python-version: "3.12"
       - name: Test EoSim on Windows
         run: |
-          pip install "eosim @ https://github.com/embeddedos-org/EoSim/releases/download/v${{ env.EOSIM_VERSION }}/eosim-${{ env.EOSIM_VERSION }}-py3-none-any.whl"
+          # No EoSim release ships a wheel, so this URL 404s. The other jobs
+          # in this workflow already install from a clone; these two were
+          # missed.
+          git clone --depth 1 --branch v${{ env.EOSIM_VERSION }} https://github.com/embeddedos-org/EoSim.git /tmp/EoSim
+          pip install -e /tmp/EoSim
           eosim --version
           eosim list && eosim doctor
           eosim list
@@ -129,7 +133,11 @@ jobs:
           python-version: "3.12"
       - name: Test EoSim on macOS
         run: |
-          pip install "eosim @ https://github.com/embeddedos-org/EoSim/releases/download/v${{ env.EOSIM_VERSION }}/eosim-${{ env.EOSIM_VERSION }}-py3-none-any.whl"
+          # No EoSim release ships a wheel, so this URL 404s. The other jobs
+          # in this workflow already install from a clone; these two were
+          # missed.
+          git clone --depth 1 --branch v${{ env.EOSIM_VERSION }} https://github.com/embeddedos-org/EoSim.git /tmp/EoSim
+          pip install -e /tmp/EoSim
           eosim --version
           eosim list && eosim doctor
           eosim list

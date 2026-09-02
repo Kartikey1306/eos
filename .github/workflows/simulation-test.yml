@@ -13,7 +13,11 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  EOSIM_VERSION: "0.1.0"
+  # embeddedos-org/EoSim has no v0.1.0 tag -- its releases run v1.0.0 to
+  # v3.0.1 -- so `git clone --branch v0.1.0` failed with "Remote branch
+  # v0.1.0 not found in upstream origin" on every run. v1.5.0 is the
+  # release marked Latest, and is what eosim-sanity.yml already pins.
+  EOSIM_VERSION: "1.5.0"
 
 jobs:
   simulate:
