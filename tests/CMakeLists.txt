@@ -95,6 +95,15 @@ add_executable(test_crypto_sha512 test_crypto_sha512.c)
 target_link_libraries(test_crypto_sha512 PRIVATE eos_crypto)
 add_test(NAME test_crypto_sha512 COMMAND test_crypto_sha512)
 
+# --- test_crypto_ed25519_loworder: reject keys outside the prime-order subgroup ---
+# Registered by #101 alongside the fix it guards, then removed by #93, whose
+# base predated it: the target looked like one more duplicate to delete. It is
+# the regression test for the #98 forgery -- an all-zero key accepting a
+# package -- so between #93 merging and this, nothing checked that fix.
+add_executable(test_crypto_ed25519_loworder test_crypto_ed25519_loworder.c)
+target_link_libraries(test_crypto_ed25519_loworder PRIVATE eos_crypto)
+add_test(NAME test_crypto_ed25519_loworder COMMAND test_crypto_ed25519_loworder)
+
 # --- test_mpu_validate: MPU region programmability ---
 # Landed with the fix it guards (#109) and lost its registration to a merge,
 # so the six cases stopped being compiled while the file stayed in the tree.
