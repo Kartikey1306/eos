@@ -120,6 +120,13 @@ target_include_directories(test_hal_stm32f4 PRIVATE
 target_link_libraries(test_hal_stm32f4 PRIVATE eos_hal)
 add_test(NAME test_hal_stm32f4 COMMAND test_hal_stm32f4)
 
+# --- test_crypto_ed25519_loworder: prime-order subgroup enforcement ---
+# Landed with the fix it guards and was never registered, so the suite
+# that proves an all-zero package key is refused had never run.
+add_executable(test_crypto_ed25519_loworder test_crypto_ed25519_loworder.c)
+target_link_libraries(test_crypto_ed25519_loworder PRIVATE eos_crypto)
+add_test(NAME test_crypto_ed25519_loworder COMMAND test_crypto_ed25519_loworder)
+
 # --- test_security: Keystore, ACL ---
 add_executable(test_security test_security.c)
 target_link_libraries(test_security PRIVATE eos_security eos_crypto)
