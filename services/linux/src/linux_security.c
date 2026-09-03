@@ -3,6 +3,7 @@
 // ISO/IEC 25000 | ISO/IEC/IEEE 15288:2023
 
 #include "eos/linux_security.h"
+#include "eos/log.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -216,15 +217,26 @@ int eos_ima_sign_file(const EosIma *ima, const char *file_path) {
         !is_word_safe(ima->algo)) return -1;
 #ifndef _WIN32
     char cmd[2048];
+    /* The `|| echo 'evmctl not available'` tail masked the shell's exit
+     * status, and the result of system() was discarded on top of that -- so
+     * on any host without evmctl this function signed nothing and told its
+     * caller it had signed. .ai/security.md: a verification step that cannot
+     * run must fail, not pass. Follows eos_dmverity_verify(), which already
+     * gets this right. */
     snprintf(cmd, sizeof(cmd),
-             "evmctl sign --key \"%s\" --hashalgo %s \"%s\" 2>/dev/null || "
-             "echo 'evmctl not available'",
+             "evmctl sign --key \"%s\" --hashalgo %s \"%s\" 2>/dev/null",
              ima->key_file, ima->algo, file_path);
-    system(cmd);
+    int rc = system(cmd);
+    if (rc != 0) {
+        EOS_ERROR("IMA signing failed for %s (evmctl missing or refused); "
+                  "the file is NOT signed.", file_path);
+        return -1;
+    }
+    return 0;
 #else
     (void)file_path;
+    return -1;
 #endif
-    return 0;
 }
 
 int eos_ima_generate_kernel_params(const EosIma *ima, char *params, size_t params_sz) {
@@ -479,7 +491,15 @@ void eos_busybox_init(EosBusybox *bb) {
 }
 
 int eos_busybox_set_version(EosBusybox *bb, const char *version) {
+    /* version is interpolated into source_dir, which is then interpolated
+     * into `make -C "%s"`. Inside those double quotes a backtick is command
+     * substitution, so this was an injection site with no check on it at all
+     * -- and it was the *default* path, taken whenever a caller does not set
+     * source_dir itself. Refuse at the boundary rather than relying on the
+     * check further down, which the caller can reach around. */
+    if (!bb || !is_word_safe(version)) return -1;
     strncpy(bb->version, version, sizeof(bb->version) - 1);
+    bb->version[sizeof(bb->version) - 1] = '\0';
     return 0;
 }
 
@@ -518,12 +538,21 @@ int eos_busybox_add_network_set(EosBusybox *bb) {
 }
 
 int eos_busybox_configure(EosBusybox *bb) {
-    if (!is_path_safe(bb->source_dir) || !is_word_safe(bb->defconfig) ||
-        !is_word_safe(bb->cross_compile)) return -1;
+    if (!bb) return -1;
+    if (!is_word_safe(bb->defconfig) || !is_word_safe(bb->cross_compile))
+        return -1;
+
+    /* Fill the default BEFORE validating it. The check used to run first, so
+     * on the default path -- source_dir empty, which is what eos_busybox_init
+     * leaves -- is_path_safe("") returned 1 because the loop body never ran,
+     * the guard passed, and the string built from bb->version below went
+     * straight into system(). Validating the value that is actually used is
+     * the whole point of the guard. */
     if (!bb->source_dir[0]) {
         snprintf(bb->source_dir, sizeof(bb->source_dir),
                  ".eos/build/src/busybox-%s", bb->version);
     }
+    if (!is_path_safe(bb->source_dir)) return -1;
 #ifndef _WIN32
     char cmd[2048];
     int offset = snprintf(cmd, sizeof(cmd), "make -C \"%s\" %s",

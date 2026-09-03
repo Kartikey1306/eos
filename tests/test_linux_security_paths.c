@@ -29,6 +29,13 @@ static int failures;
     } \
 } while (0)
 
+/* Print [PASS] only if this function's own checks all held. Printing it
+ * unconditionally is the same shape as the defects this file is about: a
+ * report that does not depend on the result. */
+#define PASS_IF_CLEAN(before, msg) do { \
+    if (failures == (before)) printf("[PASS] %s\n", (msg)); \
+} while (0)
+
 /* Payloads that a shell reads as syntax. The first two passed the original
  * denylist (";|&><$()\"'") -- it had no backtick and no newline. */
 static const char *HOSTILE[] = {
@@ -46,6 +53,7 @@ static const char *HOSTILE[] = {
 };
 
 static void test_dmverity_verify_refuses_hostile_paths(void) {
+    int f0 = failures;
     for (unsigned i = 0; i < sizeof HOSTILE / sizeof *HOSTILE; i++) {
         EosDmVerity dv;
         eos_dmverity_init(&dv);
@@ -55,7 +63,7 @@ static void test_dmverity_verify_refuses_hostile_paths(void) {
         CHECK(eos_dmverity_verify(&dv, HOSTILE[i]) != 0);
         CHECK(dv.verified == 0);
     }
-    printf("[PASS] dmverity_verify refuses hostile image paths\n");
+    PASS_IF_CLEAN(f0, "dmverity_verify refuses hostile image paths");
 }
 
 /* The two dmverity refusal tests above assert a non-zero return, which does
@@ -69,6 +77,7 @@ static void test_dmverity_verify_refuses_hostile_paths(void) {
  * the backtick survives is_path_safe(), the shell runs it, and the file
  * exists. */
 static void test_injection_does_not_execute(void) {
+    int f0 = failures;
     char dir[] = "/tmp/eos_lsp_inj_XXXXXX";
     char sentinel[320], hostile[512];
     EosDmVerity dv;
@@ -100,29 +109,32 @@ static void test_injection_does_not_execute(void) {
         remove(sentinel);
     }
     rmdir(dir);
-    printf("[PASS] an injected command substitution never executes\n");
+    PASS_IF_CLEAN(f0, "an injected command substitution never executes");
 }
 
 static void test_dmverity_verify_refuses_hostile_hash_device(void) {
+    int f0 = failures;
     EosDmVerity dv;
     eos_dmverity_init(&dv);
     strncpy(dv.hash_device, "/tmp/`id`", sizeof(dv.hash_device) - 1);
     strncpy(dv.root_hash, "abcdef", sizeof(dv.root_hash) - 1);
     CHECK(eos_dmverity_verify(&dv, "/tmp/image.img") != 0);
     CHECK(dv.verified == 0);
-    printf("[PASS] dmverity_verify refuses a hostile hash device\n");
+    PASS_IF_CLEAN(f0, "dmverity_verify refuses a hostile hash device");
 }
 
 static void test_dmverity_create_refuses_hostile_paths(void) {
+    int f0 = failures;
     EosDmVerity dv;
     eos_dmverity_init(&dv);
     CHECK(eos_dmverity_create(&dv, "/tmp/`id`", "/tmp/hash.img") != 0);
     eos_dmverity_init(&dv);
     CHECK(eos_dmverity_create(&dv, "/tmp/image.img", "/tmp/x\nid") != 0);
-    printf("[PASS] dmverity_create refuses hostile paths\n");
+    PASS_IF_CLEAN(f0, "dmverity_create refuses hostile paths");
 }
 
 static void test_busybox_refuses_hostile_fields(void) {
+    int f0 = failures;
     EosBusybox bb;
 
     eos_busybox_init(&bb);
@@ -141,15 +153,16 @@ static void test_busybox_refuses_hostile_fields(void) {
     strncpy(bb.cross_compile, "arm- ;id", sizeof(bb.cross_compile) - 1);
     CHECK(eos_busybox_build(&bb) != 0);
 
-    printf("[PASS] busybox refuses hostile source_dir/defconfig/cross_compile\n");
+    PASS_IF_CLEAN(f0, "busybox refuses hostile source_dir/defconfig/cross_compile");
 }
 
 static void test_ima_sign_refuses_hostile_paths(void) {
+    int f0 = failures;
     EosIma ima;
     eos_ima_init(&ima, EOS_IMA_ENFORCE);
     strncpy(ima.key_file, "/tmp/key.pub", sizeof(ima.key_file) - 1);
     CHECK(eos_ima_sign_file(&ima, "/tmp/`id`") != 0);
-    printf("[PASS] ima_sign_file refuses a hostile file path\n");
+    PASS_IF_CLEAN(f0, "ima_sign_file refuses a hostile file path");
 }
 
 /* A guard that refuses everything would pass every test above, so this is
@@ -157,6 +170,7 @@ static void test_ima_sign_refuses_hostile_paths(void) {
  * Proven by side effect -- a generated Makefile whose target creates a
  * sentinel file. If the sentinel exists, the command was built and run. */
 static void test_ordinary_paths_still_reach_the_shell(void) {
+    int f0 = failures;
     char dir[] = "/tmp/eos_lsp_XXXXXX";
     char mk[256], sentinel[256];
     FILE *f;
@@ -188,7 +202,83 @@ static void test_ordinary_paths_still_reach_the_shell(void) {
     CHECK(access(sentinel, F_OK) == 0);
 
     remove(sentinel); remove(mk); rmdir(dir);
-    printf("[PASS] a well-formed source_dir still reaches the shell\n");
+    PASS_IF_CLEAN(f0, "a well-formed source_dir still reaches the shell");
+}
+
+/* Finding 1 from the review: the guard ran above the line that populates the
+ * field it protects, so the *default* path -- source_dir left empty by
+ * eos_busybox_init, which is what a caller gets by not setting it -- built
+ * ".eos/build/src/busybox-<version>" from an unvalidated version and handed
+ * that to system(). is_path_safe("") returns 1 because its loop never runs,
+ * so the guard passed on exactly the input it exists to catch.
+ *
+ * Watches for the side effect, like test_injection_does_not_execute, because
+ * a non-zero return proves nothing here: `make` fails on a nonexistent
+ * directory too. */
+static void test_the_default_source_dir_path_is_validated(void) {
+    int f0 = failures;
+    char dir[] = "/tmp/eos_lsp_ver_XXXXXX";
+    char sentinel[320], hostile_version[192];
+    EosBusybox bb;
+
+    if (!mkdtemp(dir)) { fprintf(stderr, "[SKIP] mkdtemp failed\n"); return; }
+    snprintf(sentinel, sizeof sentinel, "%s/pwned", dir);
+    snprintf(hostile_version, sizeof hostile_version,
+             "1.36.1`touch %s`", sentinel);
+
+    /* The setter must refuse it outright. */
+    eos_busybox_init(&bb);
+    CHECK(eos_busybox_set_version(&bb, hostile_version) != 0);
+
+    /* And if the field is reached around -- a caller writing the struct
+     * directly -- configure() must still refuse, because it now validates
+     * the value it actually uses rather than the empty string. */
+    eos_busybox_init(&bb);
+    strncpy(bb.version, hostile_version, sizeof(bb.version) - 1);
+    bb.version[sizeof(bb.version) - 1] = '\0';
+    bb.source_dir[0] = '\0';               /* the default path */
+    CHECK(eos_busybox_configure(&bb) != 0);
+
+    CHECK(access(sentinel, F_OK) != 0);
+    if (access(sentinel, F_OK) == 0) {
+        fprintf(stderr, "[FAIL] the default path executed the injection: %s\n",
+                sentinel);
+        remove(sentinel);
+    }
+    rmdir(dir);
+    PASS_IF_CLEAN(f0, "the default source_dir is validated, not the empty string");
+}
+
+/* Finding 2: eos_ima_sign_file() discarded system()'s result and its command
+ * ended `|| echo`, so on any host without evmctl it signed nothing and
+ * returned 0. This machine has no evmctl, which is precisely the condition
+ * the finding is about -- so the assertion is that it now reports failure
+ * rather than success. */
+static void test_ima_sign_reports_failure_when_evmctl_is_absent(void) {
+    int f0 = failures;
+    EosIma ima;
+    char dir[] = "/tmp/eos_lsp_ima_XXXXXX";
+    char target[320];
+    FILE *f;
+
+    if (!mkdtemp(dir)) { fprintf(stderr, "[SKIP] mkdtemp failed\n"); return; }
+    snprintf(target, sizeof target, "%s/file", dir);
+    f = fopen(target, "w");
+    if (f) { fputs("x", f); fclose(f); }
+
+    eos_ima_init(&ima, EOS_IMA_ENFORCE);
+    strncpy(ima.key_file, "/tmp/key.pub", sizeof(ima.key_file) - 1);
+
+    if (system("command -v evmctl >/dev/null 2>&1") == 0) {
+        printf("[SKIP] evmctl is installed; "
+               "the absent-tool path cannot be exercised here\n");
+    } else {
+        CHECK(eos_ima_sign_file(&ima, target) != 0);
+        PASS_IF_CLEAN(f0, "ima_sign_file reports failure when evmctl is absent");
+    }
+
+    remove(target);
+    rmdir(dir);
 }
 
 int main(void) {
@@ -198,6 +288,8 @@ int main(void) {
     test_dmverity_create_refuses_hostile_paths();
     test_busybox_refuses_hostile_fields();
     test_ima_sign_refuses_hostile_paths();
+    test_the_default_source_dir_path_is_validated();
+    test_ima_sign_reports_failure_when_evmctl_is_absent();
     test_ordinary_paths_still_reach_the_shell();
 
     if (failures) {
