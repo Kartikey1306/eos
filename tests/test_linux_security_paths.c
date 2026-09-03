@@ -44,6 +44,24 @@ static int have_tool(const char *tool) {
     return system(probe) == 0;
 }
 
+/* eos_*_install_to_rootfs() create directories under rootfs_dir. Removing
+ * them by name rather than shelling out to `rm -rf` keeps this file free of
+ * the thing it is testing. Child-first; a path that is not there is fine. */
+static void cleanup_rootfs(const char *root) {
+    static const char *paths[] = {
+        "etc/selinux/targeted/targeted", "etc/selinux/targeted",
+        "etc/selinux/config", "etc/selinux",
+        "etc/ima/policy", "etc/ima", "etc/keys/ima-key.pub", "etc/keys",
+        "etc", ""
+    };
+    char p[512];
+    for (unsigned i = 0; i < sizeof paths / sizeof *paths; i++) {
+        snprintf(p, sizeof p, "%s/%s", root, paths[i]);
+        if (remove(p) != 0) (void)rmdir(p);
+    }
+    rmdir(root);
+}
+
 /* Payloads that a shell reads as syntax. The first two passed the original
  * denylist (";|&><$()\"'") -- it had no backtick and no newline. */
 static const char *HOSTILE[] = {
@@ -439,6 +457,278 @@ static void test_rootfs_entry_points_refuse_a_hostile_dir(void) {
     PASS_IF_CLEAN(f0, "the rootfs entry points refuse a hostile rootfs_dir");
 }
 
+/* Finding 1 of the second review: four more security steps reported success
+ * without having run. Each of the three tests below drives one of them into
+ * the state where its step cannot complete, and asserts it says so. */
+static void test_selinux_label_reports_failure_when_it_cannot_label(void) {
+    int f0 = failures;
+    char dir[] = "/tmp/eos_lsp_lbl_XXXXXX";
+    char fc[128];
+    EosSelinux se;
+    int fd;
+
+    if (!mkdtemp(dir)) { fprintf(stderr, "[SKIP] mkdtemp failed\n"); return; }
+
+    /* SELinux on, no file_contexts: nothing to label with. This used to echo
+     * a "skipping" line and return 0. */
+    eos_selinux_init(&se, EOS_SELINUX_ENFORCING);
+    CHECK(eos_selinux_label_rootfs(&se, dir) != 0);
+
+    /* Disabled is still 0 -- there is nothing to do, which is not the same
+     * as a step that could not run. */
+    eos_selinux_init(&se, EOS_SELINUX_DISABLED);
+    CHECK(eos_selinux_label_rootfs(&se, dir) == 0);
+
+    snprintf(fc, sizeof fc, "%s/file_contexts", dir);
+    fd = open(fc, O_WRONLY | O_CREAT | O_EXCL, S_IRUSR | S_IWUSR);
+    if (fd >= 0) { (void)!write(fd, "/.*  --  system_u:object_r:default_t\n", 37); close(fd); }
+
+    eos_selinux_init(&se, EOS_SELINUX_ENFORCING);
+    strncpy(se.file_contexts, fc, sizeof(se.file_contexts) - 1);
+    if (have_tool("setfiles")) {
+        printf("[SKIP] setfiles is installed; "
+               "the absent-tool path cannot be exercised here\n");
+    } else {
+        /* setfiles absent: the rootfs is not labeled, and the `|| echo` tail
+         * used to hide that behind a 0. */
+        CHECK(eos_selinux_label_rootfs(&se, dir) != 0);
+    }
+
+    remove(fc);
+    rmdir(dir);
+    PASS_IF_CLEAN(f0, "selinux_label_rootfs reports a rootfs it did not label");
+}
+
+static void test_ima_install_reports_a_key_it_did_not_install(void) {
+    int f0 = failures;
+    char dir[] = "/tmp/eos_lsp_imai_XXXXXX";
+    char key[128], installed[192], policy[192], etc[128];
+    EosIma ima;
+
+    if (!mkdtemp(dir)) { fprintf(stderr, "[SKIP] mkdtemp failed\n"); return; }
+    /* These functions MKDIR("<rootfs>/etc/<x>") without creating <rootfs>/etc
+     * first, so a bare mkdtemp() rootfs makes them fail at the fopen() long
+     * before the step under test. The positive control below is what caught
+     * that -- without it this test would have passed on the wrong -1. */
+    snprintf(etc, sizeof etc, "%s/etc", dir);
+    CHECK(mkdir(etc, 0700) == 0);
+    snprintf(key, sizeof key, "%s/absent-key.pub", dir);
+    snprintf(installed, sizeof installed, "%s/etc/keys/ima-key.pub", dir);
+    snprintf(policy, sizeof policy, "%s/etc/ima/policy", dir);
+
+    /* A key file that does not exist: cp fails, so the rootfs gets an
+     * appraise policy and no key to appraise against. `|| true` plus a
+     * discarded system() reported that as installed. */
+    eos_ima_init(&ima, EOS_IMA_ENFORCE);
+    ima.sign_executables = 1;
+    strncpy(ima.key_file, key, sizeof(ima.key_file) - 1);
+    CHECK(eos_ima_install_to_rootfs(&ima, dir) != 0);
+    CHECK(access(installed, F_OK) != 0);
+
+    /* A policy file that names a path it cannot read is the same defect in
+     * the non-shell half of the function: it used to leave /etc/ima/policy
+     * empty and return 0. */
+    eos_ima_init(&ima, EOS_IMA_ENFORCE);
+    strncpy(ima.policy_file, key, sizeof(ima.policy_file) - 1);
+    CHECK(eos_ima_install_to_rootfs(&ima, dir) != 0);
+
+    /* Counter-check: with no key and no policy file to install, the default
+     * policy is written and the function must still return 0. Without this,
+     * the two assertions above are satisfied by any function that always
+     * fails. */
+    eos_ima_init(&ima, EOS_IMA_ENFORCE);
+    CHECK(eos_ima_install_to_rootfs(&ima, dir) == 0);
+    CHECK(access(policy, F_OK) == 0);
+
+    remove(policy);
+    remove(installed);
+    cleanup_rootfs(dir);
+    PASS_IF_CLEAN(f0, "ima_install_to_rootfs reports a key it did not install");
+}
+
+static void test_busybox_install_reports_a_rootfs_it_did_not_build(void) {
+    int f0 = failures;
+    char src[] = "/tmp/eos_lsp_bbsrc_XXXXXX";
+    char rootfs[] = "/tmp/eos_lsp_bbfs_XXXXXX";
+    char mk[128], init[128];
+    EosBusybox bb;
+    int fd;
+    FILE *f;
+
+    if (!mkdtemp(src) || !mkdtemp(rootfs)) {
+        fprintf(stderr, "[SKIP] mkdtemp failed\n");
+        return;
+    }
+    snprintf(mk, sizeof mk, "%s/Makefile", src);
+    snprintf(init, sizeof init, "%s/init", rootfs);
+
+    /* A source tree with no Makefile: `make -C src install` cannot succeed
+     * (and if make is absent the shell fails the same way). system()'s
+     * result was discarded, so this returned 0 with no busybox installed --
+     * and then wrote an /init that would have nothing to exec. */
+    eos_busybox_init(&bb);
+    strncpy(bb.source_dir, src, sizeof(bb.source_dir) - 1);
+    CHECK(eos_busybox_install_to_rootfs(&bb, rootfs) != 0);
+    CHECK(access(init, F_OK) != 0);
+
+    /* The counter-check: a target that does succeed must still get through,
+     * or the fix above is just "refuse everything". */
+    if (!have_tool("make")) {
+        printf("[SKIP] make is not installed; "
+               "the success path cannot be exercised here\n");
+    } else {
+        fd = open(mk, O_WRONLY | O_CREAT | O_EXCL, S_IRUSR | S_IWUSR);
+        CHECK(fd >= 0);
+        if (fd >= 0) {
+            f = fdopen(fd, "w");
+            if (f) { fprintf(f, "install:\n\t@true\n"); fclose(f); }
+            else close(fd);
+            CHECK(eos_busybox_install_to_rootfs(&bb, rootfs) == 0);
+            CHECK(access(init, F_OK) == 0);
+        }
+    }
+
+    remove(init); remove(mk); rmdir(rootfs); rmdir(src);
+    PASS_IF_CLEAN(f0, "busybox_install_to_rootfs reports an install that did not run");
+}
+
+static void test_selinux_install_reports_a_policy_it_did_not_copy(void) {
+    int f0 = failures;
+    char pdir[] = "/tmp/eos_lsp_pol_XXXXXX";
+    char rootfs[] = "/tmp/eos_lsp_serfs_XXXXXX";
+    char policy[128], etc[128];
+    EosSelinux se;
+    int fd;
+
+    if (!mkdtemp(pdir) || !mkdtemp(rootfs)) {
+        fprintf(stderr, "[SKIP] mkdtemp failed\n");
+        return;
+    }
+    snprintf(etc, sizeof etc, "%s/etc", rootfs);
+    CHECK(mkdir(etc, 0700) == 0);
+    snprintf(policy, sizeof policy, "%s/targeted", pdir);
+    fd = open(policy, O_WRONLY | O_CREAT | O_EXCL, S_IRUSR | S_IWUSR);
+    CHECK(fd >= 0);
+    if (fd < 0) { rmdir(pdir); rmdir(rootfs); return; }
+    (void)!write(fd, "policy\n", 7);
+    close(fd);
+
+    eos_selinux_init(&se, EOS_SELINUX_ENFORCING);
+    CHECK(eos_selinux_set_policy(&se, pdir, "targeted") == 0);
+
+    /* Positive control first: with the policy file present the copy runs and
+     * the function must still return 0. */
+    CHECK(eos_selinux_install_to_rootfs(&se, rootfs) == 0);
+
+    /* Now take the file away, leaving policy_loaded set -- the glob matches
+     * nothing, cp fails, and the rootfs config names a policy that is not
+     * there. `|| true` used to report that as done. */
+    remove(policy);
+    CHECK(eos_selinux_install_to_rootfs(&se, rootfs) != 0);
+
+    cleanup_rootfs(rootfs);
+    rmdir(pdir);
+    PASS_IF_CLEAN(f0, "selinux_install_to_rootfs reports a policy it did not copy");
+}
+
+
+/* The hostile-rootfs_dir cases above are refused before any command is built,
+ * which means they also pass on a build with no guard at all -- the calls
+ * fail at the fopen() instead. So the guard on the one path that really does
+ * reach a shell gets a fixture that would execute if it were removed: a
+ * directory whose *name* is the injection, with the /etc the function needs,
+ * and a loaded policy so the `cp` is actually reached.
+ *
+ * Verified by mutation: with the rootfs_dir term deleted from that guard,
+ * this test fails and /tmp holds the sentinel. */
+static void test_selinux_install_guard_stops_a_reachable_injection(void) {
+    int f0 = failures;
+    char base[] = "/tmp/eos_lsp_reach_XXXXXX";
+    char pdir[] = "/tmp/eos_lsp_reachp_XXXXXX";
+    char hostile[192], etc[256], policy[128];
+    /* A bare name, not a path: this whole string becomes one directory
+     * *name*, so a '/' in it would be a directory separator instead. The
+     * touch therefore lands in the working directory. */
+    static const char *sentinel = "eos_lsp_reach_pwned";
+    int n, fd;
+    EosSelinux se;
+
+    remove(sentinel);                     /* in case an earlier run left one */
+    if (!mkdtemp(base) || !mkdtemp(pdir)) {
+        fprintf(stderr, "[SKIP] mkdtemp failed\n");
+        return;
+    }
+    /* A real directory whose name contains the substitution. Creating it
+     * takes no shell; only interpolating it into a command does. */
+    n = snprintf(hostile, sizeof hostile, "%s/`touch %s`", base, sentinel);
+    CHECK(n > 0 && (size_t)n < sizeof hostile);
+    if (mkdir(hostile, 0700) != 0) {
+        fprintf(stderr, "[SKIP] cannot create the fixture directory\n");
+        rmdir(pdir); rmdir(base);
+        return;
+    }
+    snprintf(etc, sizeof etc, "%s/etc", hostile);
+    CHECK(mkdir(etc, 0700) == 0);
+
+    snprintf(policy, sizeof policy, "%s/targeted", pdir);
+    fd = open(policy, O_WRONLY | O_CREAT | O_EXCL, S_IRUSR | S_IWUSR);
+    CHECK(fd >= 0);
+    if (fd >= 0) { (void)!write(fd, "policy\n", 7); close(fd); }
+
+    eos_selinux_init(&se, EOS_SELINUX_ENFORCING);
+    CHECK(eos_selinux_set_policy(&se, pdir, "targeted") == 0);
+    CHECK(eos_selinux_install_to_rootfs(&se, hostile) != 0);
+
+    CHECK(access(sentinel, F_OK) != 0);
+    if (access(sentinel, F_OK) == 0) {
+        fprintf(stderr, "[FAIL] the policy copy executed the injection: %s\n",
+                sentinel);
+        remove(sentinel);
+    }
+
+    cleanup_rootfs(hostile);
+    remove(policy); rmdir(pdir); rmdir(base);
+    PASS_IF_CLEAN(f0, "the selinux policy copy cannot be reached by a rootfs_dir");
+}
+
+/* The /init writer is the last step of eos_busybox_install_to_rootfs and it
+ * used to ignore its own fopen(): an initramfs with no /init, reported as
+ * installed. An unwritable rootfs is the reachable way to produce that. */
+static void test_busybox_install_reports_an_init_it_could_not_write(void) {
+    int f0 = failures;
+    char rootfs[] = "/tmp/eos_lsp_ro_XXXXXX";
+    char probe[128], init[128];
+    EosBusybox bb;
+    int fd;
+
+    if (!mkdtemp(rootfs)) { fprintf(stderr, "[SKIP] mkdtemp failed\n"); return; }
+    snprintf(init, sizeof init, "%s/init", rootfs);
+    if (chmod(rootfs, S_IRUSR | S_IXUSR) != 0) {
+        fprintf(stderr, "[SKIP] chmod failed\n");
+        rmdir(rootfs);
+        return;
+    }
+    /* root ignores the mode bits, so check that the directory really is
+     * unwritable before asserting on what happens when it is. */
+    snprintf(probe, sizeof probe, "%s/probe", rootfs);
+    fd = open(probe, O_WRONLY | O_CREAT | O_EXCL, S_IRUSR | S_IWUSR);
+    if (fd >= 0) {
+        close(fd); remove(probe);
+        printf("[SKIP] the rootfs is writable anyway (running as root?)\n");
+        chmod(rootfs, S_IRWXU); rmdir(rootfs);
+        return;
+    }
+
+    /* source_dir empty skips the make step, so the fopen() is the only thing
+     * that can fail here. */
+    eos_busybox_init(&bb);
+    CHECK(eos_busybox_install_to_rootfs(&bb, rootfs) != 0);
+    CHECK(access(init, F_OK) != 0);
+
+    chmod(rootfs, S_IRWXU);
+    rmdir(rootfs);
+    PASS_IF_CLEAN(f0, "busybox_install_to_rootfs reports an /init it could not write");
+}
 
 int main(void) {
     test_dmverity_verify_refuses_hostile_paths();
@@ -451,6 +741,12 @@ int main(void) {
     test_the_default_source_dir_path_is_validated();
     test_ima_sign_reports_failure_when_evmctl_is_absent();
     test_rootfs_entry_points_refuse_a_hostile_dir();
+    test_selinux_label_reports_failure_when_it_cannot_label();
+    test_ima_install_reports_a_key_it_did_not_install();
+    test_busybox_install_reports_a_rootfs_it_did_not_build();
+    test_selinux_install_reports_a_policy_it_did_not_copy();
+    test_selinux_install_guard_stops_a_reachable_injection();
+    test_busybox_install_reports_an_init_it_could_not_write();
     test_ordinary_paths_still_reach_the_shell();
 
     if (failures) {
