@@ -20,7 +20,11 @@
 #include <stdio.h>
 #include <string.h>
 
-int sc_is_canonical(const unsigned char s[32]);
+/* Include the translation unit to reach its static. The alternative --
+ * compiling ed25519_verify.c a second time with a macro that makes the symbol
+ * external -- gave the function a linkage that varied by build, which static
+ * analysis reads as an unreachable static in the ordinary build. */
+#include "../services/crypto/src/ed25519_verify.c"
 
 static int failures = 0;
 

@@ -100,12 +100,15 @@ add_test(NAME test_crypto_ed25519_loworder COMMAND test_crypto_ed25519_loworder)
 # sc_is_canonical() has external linkage. The corpus cannot reach this
 # boundary: through the public API, S == L and a failed group equation are
 # both simply 0.
-add_executable(test_ed25519_canonical_s
-    test_ed25519_canonical_s.c
-    ${CMAKE_SOURCE_DIR}/services/crypto/src/ed25519_verify.c)
-target_compile_definitions(test_ed25519_canonical_s PRIVATE EOS_ED25519_TEST_HOOKS)
+# The test #includes ed25519_verify.c to reach its static, so that source is
+# not listed here. eos_crypto is still linked for the ge_*/sha512 helpers the
+# included unit calls: a static archive contributes only the objects needed
+# for still-undefined symbols, and ed25519_verify.c.o is not one of them
+# because the test object already defines everything in it.
+add_executable(test_ed25519_canonical_s test_ed25519_canonical_s.c)
 target_include_directories(test_ed25519_canonical_s PRIVATE
-    ${CMAKE_SOURCE_DIR}/services/crypto/include)
+    ${CMAKE_SOURCE_DIR}/services/crypto/include
+    ${CMAKE_SOURCE_DIR}/services/crypto/src)
 target_link_libraries(test_ed25519_canonical_s PRIVATE eos_crypto)
 add_test(NAME test_ed25519_canonical_s COMMAND test_ed25519_canonical_s)
 

@@ -160,14 +160,14 @@ int ed25519_public_key_is_usable(const unsigned char *public_key) {
  * off-by-one here from an ordinary rejection -- and an off-by-one that
  * refused a valid S = L - 1 would satisfy every vector in the corpus while
  * rejecting real signatures in the field. It is a pure function of 32 bytes,
- * so it can be tested directly and without generating any signatures. */
-#ifdef EOS_ED25519_TEST_HOOKS
-#define SC_LINKAGE
-#else
-#define SC_LINKAGE static
-#endif
-
-SC_LINKAGE int sc_is_canonical(const unsigned char s[32]) {
+ * so it can be tested directly and without generating any signatures.
+ *
+ * It stays static. tests/test_ed25519_canonical_s.c includes this translation
+ * unit to reach it, rather than the file being compiled twice with a macro
+ * that changes this symbol's linkage -- that arrangement made the function
+ * look unreachable to static analysis, and a linkage that varies by build is
+ * a poor thing to have in a crypto source file. */
+static int sc_is_canonical(const unsigned char s[32]) {
     /* L, little-endian. */
     static const unsigned char L[32] = {
         0xed, 0xd3, 0xf5, 0x5c, 0x1a, 0x63, 0x12, 0x58,

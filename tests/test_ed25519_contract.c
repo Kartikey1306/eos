@@ -23,6 +23,7 @@
  */
 
 #include "ed25519.h"
+#include "eos/crypto.h"
 
 #include "vectors/ed25519_contract_vectors.h"
 
@@ -39,8 +40,9 @@
  * the test still exits 0, and the divergence is visible only to a human
  * reading two CI logs in two repositories.
  *
- * This value must stay byte-identical to the one in eBoot's
- * tests/unit/test_ed25519_contract.c. The count and accept-count are pinned
+ * Recomputed over the vector bytes at run time, so an edited vector fails as
+ * loudly as a changed generator. This value must stay byte-identical to the
+ * one in eBoot's tests/unit/test_ed25519_contract.c. The count and accept-count are pinned
  * for the same reason: both are generated, so a corpus that silently shrank
  * would otherwise still pass.
  */
@@ -48,6 +50,39 @@
     "1059febedae2b3e3dfaa1ef5b419fb37ed7f0d53b377a3250b53b95a546282a2"
 #define EOS_ED25519_CONTRACT_EXPECTED_COUNT     76
 #define EOS_ED25519_CONTRACT_EXPECTED_ACCEPTS   3
+
+/* SHA-256 over the corpus, in the generator's serialisation order.
+ *
+ * Recomputed here rather than read back from the generated header. The
+ * previous version compared EOS_ED25519_CONTRACT_DIGEST -- a #define written
+ * into that same header -- against the literal below, so nothing hashed the
+ * vectors: editing a committed vector changed the data and left the value it
+ * was compared against untouched, and the suite still passed. Same fix as
+ * eBoot's tests/unit/test_ed25519_contract.c, and the serialisation matches
+ * tools/gen_ed25519_contract_vectors.py exactly.
+ */
+static void contract_digest(char out_hex[65]) {
+    EosSha256 sha;
+    uint8_t digest[EOS_SHA256_DIGEST_SIZE];
+    int i, j;
+
+    eos_sha256_init(&sha);
+    for (i = 0; i < EOS_ED25519_CONTRACT_COUNT; i++) {
+        const eos_ed25519_contract_vector_t *v =
+            &eos_ed25519_contract_vectors[i];
+        uint8_t accept = (uint8_t)v->expect_accept;
+
+        eos_sha256_update(&sha, v->public_key, sizeof v->public_key);
+        eos_sha256_update(&sha, v->signature, sizeof v->signature);
+        eos_sha256_update(&sha, v->message, v->message_len);
+        eos_sha256_update(&sha, &accept, 1);
+    }
+    eos_sha256_final(&sha, digest);
+
+    for (j = 0; j < EOS_SHA256_DIGEST_SIZE; j++)
+        snprintf(out_hex + j * 2, 3, "%02x", digest[j]);
+    out_hex[64] = '\0';
+}
 
 int main(void) {
     unsigned failed = 0, accepted = 0, refused = 0, positives = 0;
@@ -57,15 +92,26 @@ int main(void) {
     printf("  digest: %s\n", EOS_ED25519_CONTRACT_DIGEST);
     printf("  count:  %d\n\n", EOS_ED25519_CONTRACT_COUNT);
 
-    if (strcmp(EOS_ED25519_CONTRACT_DIGEST,
-               EOS_ED25519_CONTRACT_EXPECTED) != 0) {
+    char computed[65];
+    contract_digest(computed);
+
+    if (strcmp(computed, EOS_ED25519_CONTRACT_EXPECTED) != 0) {
         printf("[FAIL] corpus digest changed\n"
                "       expected %s\n"
                "       got      %s\n"
-               "       The generator was edited, or the two repos' copies\n"
-               "       have diverged. Re-derive, confirm eos and eBoot agree,\n"
-               "       then update the pin in BOTH.\n",
-               EOS_ED25519_CONTRACT_EXPECTED, EOS_ED25519_CONTRACT_DIGEST);
+               "       A vector was edited, the generator was changed, or the\n"
+               "       two repos' copies have diverged. Re-derive, confirm eos\n"
+               "       and eBoot agree, then update the pin in BOTH.\n",
+               EOS_ED25519_CONTRACT_EXPECTED, computed);
+        return 1;
+    }
+
+    /* The header's own claim must agree too: if it does not, the committed
+     * corpus and the header describing it came from different runs. */
+    if (strcmp(computed, EOS_ED25519_CONTRACT_DIGEST) != 0) {
+        printf("[FAIL] the header's digest (%s) does not describe the vectors "
+               "it ships with (%s)\n",
+               EOS_ED25519_CONTRACT_DIGEST, computed);
         return 1;
     }
 
