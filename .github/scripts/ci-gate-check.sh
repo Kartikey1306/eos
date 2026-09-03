@@ -14,10 +14,15 @@
 # for the string it expects to find there.
 set -euo pipefail
 
+# Three different checks share this rule, so the message has to name the one
+# that actually failed. It said "CI Gate" unconditionally, which put the wrong
+# check name in the log of the other two.
+gate=${GATE_NAME:-Gate}
+
 results=$(cat)
 
 if [ -z "$results" ] || [ "$results" = "null" ]; then
-    echo "::error::CI Gate received no job results; refusing to pass." >&2
+    echo "::error::${gate} received no job results; refusing to pass." >&2
     exit 1
 fi
 
@@ -29,7 +34,7 @@ bad=$(printf '%s' "$results" | jq -r '
     | "  \(.key): \(.value.result)"')
 
 if [ -n "$bad" ]; then
-    echo "::error::CI Gate failed. These jobs did not succeed:"
+    echo "::error::${gate} failed. These jobs did not succeed:"
     printf '%s\n' "$bad"
     exit 1
 fi

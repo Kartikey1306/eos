@@ -186,4 +186,5 @@ jobs:
       - name: Every job in this workflow must have succeeded
         env:
           RESULTS: ${{ toJSON(needs) }}
+          GATE_NAME: "Build Gate"
         run: printf '%s' "$RESULTS" | .github/scripts/ci-gate-check.sh

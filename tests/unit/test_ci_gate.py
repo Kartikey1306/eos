@@ -280,6 +280,18 @@ def test_gate_script_exists_and_is_executable():
     )
 
 
+def test_gate_names_itself_in_its_own_failure_message():
+    """Three checks share one script, so the message must name the right one."""
+    out = subprocess.run(
+        [str(GATE_SCRIPT)], input=json.dumps({"a": {"result": "failure"}}),
+        capture_output=True, text=True, env={**os.environ, "GATE_NAME": "Build Gate"},
+    )
+    assert "Build Gate failed" in out.stdout + out.stderr, (
+        f"the gate reported under a name that is not its own: {out.stdout!r} "
+        f"{out.stderr!r}"
+    )
+
+
 def test_gate_script_runs_the_way_the_workflows_invoke_it():
     """The parametrized cases say `bash <script>`; the workflows do not."""
     direct = [str(GATE_SCRIPT)]
@@ -349,3 +361,19 @@ def test_every_gate_checks_out_the_repository_before_running_the_script(
             f"never checks the repository out, so the step exits 127 and the "
             f"check can never report success."
         )
+
+
+def test_every_gate_passes_its_own_display_name_to_the_script(pr_workflows):
+    """A log that names a different check than the one that failed misleads."""
+    for workflow, (job_id, display) in REQUIRED_CHECKS.items():
+        job = pr_workflows[workflow]["jobs"][job_id]
+        steps = job.get("steps", [])
+        for step in steps:
+            if "ci-gate-check.sh" not in str(step.get("run", "")):
+                continue
+            declared = (step.get("env") or {}).get("GATE_NAME")
+            assert declared == display, (
+                f"{workflow}: {job_id!r} reports as {display!r} but tells the "
+                f"gate script it is {declared!r}, so a failure is logged under "
+                f"the wrong check name."
+            )

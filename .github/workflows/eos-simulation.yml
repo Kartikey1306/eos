@@ -337,6 +337,7 @@ jobs:
       - name: Report final status
         env:
           RESULTS: ${{ toJSON(needs) }}
+          GATE_NAME: "Full-stack integration summary"
         run: |
           echo "╔══════════════════════════════════════════════════════╗"
           echo "║   EoS CI Full-Stack Integration Summary              ║"
