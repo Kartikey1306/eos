@@ -52,6 +52,12 @@ jobs:
           git clone --filter=blob:none https://github.com/embeddedos-org/EoSim.git "${{ runner.temp }}/EoSim"
           git -C "${{ runner.temp }}/EoSim" checkout --detach ${{ env.EOSIM_COMMIT }}
           pip install "${{ runner.temp }}/EoSim"
+          # See the note in eosim-sanity.yml: PLATFORMS_DIR resolves to
+          # <site-packages>/platforms and the package ships only
+          # eosim/platforms/__init__.py, so without this every `eosim run`
+          # fails with FileNotFoundError.
+          SITE_PACKAGES=$(python -c "import eosim, os; print(os.path.dirname(os.path.dirname(eosim.__file__)))")
+          cp -r "${{ runner.temp }}/EoSim/platforms" "$SITE_PACKAGES/"
       - name: Validate platform
         run: eosim list
       - name: Run simulation
@@ -82,6 +88,12 @@ jobs:
           git clone --filter=blob:none https://github.com/embeddedos-org/EoSim.git "${{ runner.temp }}/EoSim"
           git -C "${{ runner.temp }}/EoSim" checkout --detach ${{ env.EOSIM_COMMIT }}
           pip install "${{ runner.temp }}/EoSim"
+          # See the note in eosim-sanity.yml: PLATFORMS_DIR resolves to
+          # <site-packages>/platforms and the package ships only
+          # eosim/platforms/__init__.py, so without this every `eosim run`
+          # fails with FileNotFoundError.
+          SITE_PACKAGES=$(python -c "import eosim, os; print(os.path.dirname(os.path.dirname(eosim.__file__)))")
+          cp -r "${{ runner.temp }}/EoSim/platforms" "$SITE_PACKAGES/"
       - name: Validate all platforms
         run: eosim list && eosim doctor
 

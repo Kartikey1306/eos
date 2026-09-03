@@ -115,6 +115,15 @@ jobs:
           git clone --filter=blob:none https://github.com/embeddedos-org/EoSim.git "${{ runner.temp }}/EoSim"
           git -C "${{ runner.temp }}/EoSim" checkout --detach ${{ env.EOSIM_COMMIT }}
           pip install "${{ runner.temp }}/EoSim"
+          # platforms/ is data, not package data: eosim/cli/main.py sets
+          # PLATFORMS_DIR to <site-packages>/platforms, while the package
+          # ships only eosim/platforms/__init__.py. Without this copy every
+          # `eosim run` fails with
+          #   FileNotFoundError: .../site-packages/platforms
+          # which is what the first real run of this workflow showed -- the
+          # missing v0.1.0 tag was the first blocker, not the only one.
+          SITE_PACKAGES=$(python -c "import eosim, os; print(os.path.dirname(os.path.dirname(eosim.__file__)))")
+          cp -r "${{ runner.temp }}/EoSim/platforms" "$SITE_PACKAGES/"
       - name: Verify installation
         run: |
           eosim --version
@@ -158,6 +167,15 @@ jobs:
           git clone --filter=blob:none https://github.com/embeddedos-org/EoSim.git "${{ runner.temp }}/EoSim"
           git -C "${{ runner.temp }}/EoSim" checkout --detach ${{ env.EOSIM_COMMIT }}
           pip install "${{ runner.temp }}/EoSim"
+          # platforms/ is data, not package data: eosim/cli/main.py sets
+          # PLATFORMS_DIR to <site-packages>/platforms, while the package
+          # ships only eosim/platforms/__init__.py. Without this copy every
+          # `eosim run` fails with
+          #   FileNotFoundError: .../site-packages/platforms
+          # which is what the first real run of this workflow showed -- the
+          # missing v0.1.0 tag was the first blocker, not the only one.
+          SITE_PACKAGES=$(python -c "import eosim, os; print(os.path.dirname(os.path.dirname(eosim.__file__)))")
+          cp -r "${{ runner.temp }}/EoSim/platforms" "$SITE_PACKAGES/"
       - name: Simulate ${{ matrix.platform }}
         run: |
           eosim run ${{ matrix.platform }} --headless --timeout 10
@@ -187,6 +205,15 @@ jobs:
           git clone --filter=blob:none https://github.com/embeddedos-org/EoSim.git "${{ runner.temp }}/EoSim"
           git -C "${{ runner.temp }}/EoSim" checkout --detach ${{ env.EOSIM_COMMIT }}
           pip install "${{ runner.temp }}/EoSim"
+          # platforms/ is data, not package data: eosim/cli/main.py sets
+          # PLATFORMS_DIR to <site-packages>/platforms, while the package
+          # ships only eosim/platforms/__init__.py. Without this copy every
+          # `eosim run` fails with
+          #   FileNotFoundError: .../site-packages/platforms
+          # which is what the first real run of this workflow showed -- the
+          # missing v0.1.0 tag was the first blocker, not the only one.
+          SITE_PACKAGES=$(python -c "import eosim, os; print(os.path.dirname(os.path.dirname(eosim.__file__)))")
+          cp -r "${{ runner.temp }}/EoSim/platforms" "$SITE_PACKAGES/"
       - name: Boot guest and test EoSim inside
         run: |
           echo "=== Nested Guest: ${{ matrix.guest }} ==="
@@ -210,6 +237,15 @@ jobs:
           git clone --filter=blob:none https://github.com/embeddedos-org/EoSim.git "${{ runner.temp }}/EoSim"
           git -C "${{ runner.temp }}/EoSim" checkout --detach ${{ env.EOSIM_COMMIT }}
           pip install "${{ runner.temp }}/EoSim"
+          # platforms/ is data, not package data: eosim/cli/main.py sets
+          # PLATFORMS_DIR to <site-packages>/platforms, while the package
+          # ships only eosim/platforms/__init__.py. Without this copy every
+          # `eosim run` fails with
+          #   FileNotFoundError: .../site-packages/platforms
+          # which is what the first real run of this workflow showed -- the
+          # missing v0.1.0 tag was the first blocker, not the only one.
+          SITE_PACKAGES=$(python -c "import eosim, os; print(os.path.dirname(os.path.dirname(eosim.__file__)))")
+          cp -r "${{ runner.temp }}/EoSim/platforms" "$SITE_PACKAGES/"
           eosim --version
           # `eosim --version` is a hardcoded literal in EoSim
           # (eosim/cli/main.py:49) and prints 2.0.0 from every tag, so it
@@ -242,6 +278,15 @@ jobs:
           git clone --filter=blob:none https://github.com/embeddedos-org/EoSim.git "${{ runner.temp }}/EoSim"
           git -C "${{ runner.temp }}/EoSim" checkout --detach ${{ env.EOSIM_COMMIT }}
           pip install "${{ runner.temp }}/EoSim"
+          # platforms/ is data, not package data: eosim/cli/main.py sets
+          # PLATFORMS_DIR to <site-packages>/platforms, while the package
+          # ships only eosim/platforms/__init__.py. Without this copy every
+          # `eosim run` fails with
+          #   FileNotFoundError: .../site-packages/platforms
+          # which is what the first real run of this workflow showed -- the
+          # missing v0.1.0 tag was the first blocker, not the only one.
+          SITE_PACKAGES=$(python -c "import eosim, os; print(os.path.dirname(os.path.dirname(eosim.__file__)))")
+          cp -r "${{ runner.temp }}/EoSim/platforms" "$SITE_PACKAGES/"
           eosim --version
           # `eosim --version` is a hardcoded literal in EoSim
           # (eosim/cli/main.py:49) and prints 2.0.0 from every tag, so it
