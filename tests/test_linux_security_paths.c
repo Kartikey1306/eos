@@ -259,12 +259,18 @@ static void test_ima_sign_reports_failure_when_evmctl_is_absent(void) {
     EosIma ima;
     char dir[] = "/tmp/eos_lsp_ima_XXXXXX";
     char target[320];
-    FILE *f;
+    int fd;
 
     if (!mkdtemp(dir)) { fprintf(stderr, "[SKIP] mkdtemp failed\n"); return; }
     snprintf(target, sizeof target, "%s/file", dir);
-    f = fopen(target, "w");
-    if (f) { fputs("x", f); fclose(f); }
+
+    /* open(O_CREAT, 0600), not fopen("w") -- same reason as the Makefile
+     * fixture above: fopen creates with 0666 masked by umask, so under a
+     * permissive umask this file is world-writable while a signing tool is
+     * pointed at it. Third instance of this in the file; the first two were
+     * fixed for exactly this. */
+    fd = open(target, O_WRONLY | O_CREAT | O_EXCL, S_IRUSR | S_IWUSR);
+    if (fd >= 0) { (void)!write(fd, "x", 1); close(fd); }
 
     eos_ima_init(&ima, EOS_IMA_ENFORCE);
     strncpy(ima.key_file, "/tmp/key.pub", sizeof(ima.key_file) - 1);
