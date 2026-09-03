@@ -27,6 +27,4 @@ build_sim/
 # paths from one contributor's machine. Every other build directory listed
 # above is here because it was committed once; this is the same mistake
 # under a name none of those patterns matched.
-bsan/
-bsan2/
 bsan*/
