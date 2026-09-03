@@ -111,6 +111,12 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install EoSim from source
+        # shell: bash -- this job also runs on windows-latest, where the
+        # runner default is pwsh. `VAR=$(...)`, `cp -r` and a leading `#`
+        # comment are all invalid there, which is how the first real run
+        # of this workflow failed on all three Windows legs while ubuntu
+        # and macOS passed.
+        shell: bash
         run: |
           git clone --filter=blob:none https://github.com/embeddedos-org/EoSim.git "${{ runner.temp }}/EoSim"
           git -C "${{ runner.temp }}/EoSim" checkout --detach ${{ env.EOSIM_COMMIT }}
@@ -125,6 +131,12 @@ jobs:
           SITE_PACKAGES=$(python -c "import eosim, os; print(os.path.dirname(os.path.dirname(eosim.__file__)))")
           cp -r "${{ runner.temp }}/EoSim/platforms" "$SITE_PACKAGES/"
       - name: Verify installation
+        # shell: bash -- this job also runs on windows-latest, where the
+        # runner default is pwsh. `VAR=$(...)`, `cp -r` and a leading `#`
+        # comment are all invalid there, which is how the first real run
+        # of this workflow failed on all three Windows legs while ubuntu
+        # and macOS passed.
+        shell: bash
         run: |
           eosim --version
           # `eosim --version` is a hardcoded literal in EoSim
@@ -140,6 +152,12 @@ jobs:
           "
           eosim list
       - name: Validate all platform configs
+        # shell: bash -- this job also runs on windows-latest, where the
+        # runner default is pwsh. `VAR=$(...)`, `cp -r` and a leading `#`
+        # comment are all invalid there, which is how the first real run
+        # of this workflow failed on all three Windows legs while ubuntu
+        # and macOS passed.
+        shell: bash
         run: eosim list && eosim doctor
 
   nested-simulation:
@@ -163,6 +181,12 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install EoSim from source
+        # shell: bash -- this job also runs on windows-latest, where the
+        # runner default is pwsh. `VAR=$(...)`, `cp -r` and a leading `#`
+        # comment are all invalid there, which is how the first real run
+        # of this workflow failed on all three Windows legs while ubuntu
+        # and macOS passed.
+        shell: bash
         run: |
           git clone --filter=blob:none https://github.com/embeddedos-org/EoSim.git "${{ runner.temp }}/EoSim"
           git -C "${{ runner.temp }}/EoSim" checkout --detach ${{ env.EOSIM_COMMIT }}
@@ -201,6 +225,12 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install EoSim from source
+        # shell: bash -- this job also runs on windows-latest, where the
+        # runner default is pwsh. `VAR=$(...)`, `cp -r` and a leading `#`
+        # comment are all invalid there, which is how the first real run
+        # of this workflow failed on all three Windows legs while ubuntu
+        # and macOS passed.
+        shell: bash
         run: |
           git clone --filter=blob:none https://github.com/embeddedos-org/EoSim.git "${{ runner.temp }}/EoSim"
           git -C "${{ runner.temp }}/EoSim" checkout --detach ${{ env.EOSIM_COMMIT }}
@@ -230,6 +260,12 @@ jobs:
         with:
           python-version: "3.12"
       - name: Test EoSim on Windows
+        # shell: bash -- this job also runs on windows-latest, where the
+        # runner default is pwsh. `VAR=$(...)`, `cp -r` and a leading `#`
+        # comment are all invalid there, which is how the first real run
+        # of this workflow failed on all three Windows legs while ubuntu
+        # and macOS passed.
+        shell: bash
         run: |
           # No EoSim release ships a wheel, so this URL 404s. The other jobs
           # in this workflow already install from a clone; these two were
