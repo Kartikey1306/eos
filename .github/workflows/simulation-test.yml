@@ -48,6 +48,12 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install EoSim from source
+        # shell: bash -- the cross-platform matrix includes
+        # windows-latest, where the runner default is pwsh and the bash
+        # below is not valid. Same fix as eosim-sanity.yml; this file
+        # needed it too and the first two runs only reached it after the
+        # earlier blockers were cleared.
+        shell: bash
         run: |
           git clone --filter=blob:none https://github.com/embeddedos-org/EoSim.git "${{ runner.temp }}/EoSim"
           git -C "${{ runner.temp }}/EoSim" checkout --detach ${{ env.EOSIM_COMMIT }}
@@ -84,6 +90,12 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install EoSim from source
+        # shell: bash -- the cross-platform matrix includes
+        # windows-latest, where the runner default is pwsh and the bash
+        # below is not valid. Same fix as eosim-sanity.yml; this file
+        # needed it too and the first two runs only reached it after the
+        # earlier blockers were cleared.
+        shell: bash
         run: |
           git clone --filter=blob:none https://github.com/embeddedos-org/EoSim.git "${{ runner.temp }}/EoSim"
           git -C "${{ runner.temp }}/EoSim" checkout --detach ${{ env.EOSIM_COMMIT }}
@@ -95,6 +107,12 @@ jobs:
           SITE_PACKAGES=$(python -c "import eosim, os; print(os.path.dirname(os.path.dirname(eosim.__file__)))")
           cp -r "${{ runner.temp }}/EoSim/platforms" "$SITE_PACKAGES/"
       - name: Validate all platforms
+        # shell: bash -- the cross-platform matrix includes
+        # windows-latest, where the runner default is pwsh and the bash
+        # below is not valid. Same fix as eosim-sanity.yml; this file
+        # needed it too and the first two runs only reached it after the
+        # earlier blockers were cleared.
+        shell: bash
         run: eosim list && eosim doctor
 
   sanity-gate:
