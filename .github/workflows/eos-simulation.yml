@@ -328,6 +328,12 @@ jobs:
     needs: [build-kernel, simulate-qemu, test-middleware, test-cad-pipeline]
     if: always()
     steps:
+      # The gate rule lives in .github/scripts/ci-gate-check.sh, so this job
+      # needs the repository in its workspace. Without the checkout the step
+      # exits 127 on a missing file -- red for a reason that has nothing to do
+      # with its dependencies, and never green, so requiring this name would
+      # make master permanently unmergeable.
+      - uses: actions/checkout@v4
       - name: Report final status
         env:
           RESULTS: ${{ toJSON(needs) }}

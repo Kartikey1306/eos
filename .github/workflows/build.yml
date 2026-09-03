@@ -171,7 +171,9 @@ jobs:
           fi
 
   # ── Required check ────────────────────────────────────────────────────────
-  # See .github/STANDARDS.md. One requirable name per workflow: this workflow
+  # See https://github.com/embeddedos-org/.github/blob/master/STANDARDS.md --
+  # the org-wide file, not a local one; there is no .github/STANDARDS.md in
+  # this repository. One requirable name per workflow: this workflow
   # produces three PR statuses and branch protection can only name checks, so
   # without this there is no single name that is red when any of them fails.
   build-gate:

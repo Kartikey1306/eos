@@ -22,9 +22,18 @@ Two workflows need no gate job because they define exactly one job that can run
 on a pull request; that job's own name is stable and requirable. The tests
 enforce that they stay single-job, so a second job cannot appear beside an
 uncovered one.
+
+A gate also has to be able to *run*. The first version of
+`Full-stack integration summary` invoked the shared rule script with no
+`actions/checkout` step, so it exited 127 on a missing file: red for a reason
+unrelated to its dependencies and never green, which would have made a required
+check on that name block every merge. So the reasons recorded here are checked
+against the workflows rather than trusted, and the rule script is executed the
+way the workflows invoke it rather than grepped for.
 """
 
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -60,8 +69,9 @@ NOT_REQUIRED = {
     "claude-code-review.yml":
         "advisory; both jobs are gated on a label or a non-pull_request event",
     "book-build.yml":
-        "documentation build; build-pdf is conditional on whether a book "
-        "exists, so the workflow legitimately skips on most pull requests",
+        "documentation build; its pull_request trigger is filtered to "
+        "paths: ['docs/book/**'], so on a pull request that touches nothing "
+        "under that path it reports no status at all",
 }
 
 # (workflow, job) pairs excluded from their gate's `needs`, with the reason.
@@ -81,8 +91,26 @@ def _load(name):
 
 def _triggers_on_pull_request(doc):
     # PyYAML parses a bare `on:` key as the boolean True.
-    on = doc.get("on", doc.get(True)) or {}
+    on = doc.get("on", doc.get(True))
+    if not on:
+        return False
+    # `on: pull_request` and `on: [push, pull_request]` are both valid Actions
+    # syntax and neither is a mapping. Handling only the mapping form made such
+    # a workflow invisible to the scan -- silently unclassified, which is the
+    # rot this file exists to catch.
+    if isinstance(on, str):
+        on = [on]
+    if isinstance(on, list):
+        return "pull_request" in on
     return isinstance(on, dict) and "pull_request" in on
+
+
+def _pull_request_trigger(doc):
+    """The `pull_request:` value, or None when the workflow does not use one."""
+    on = doc.get("on", doc.get(True))
+    if isinstance(on, dict):
+        return on.get("pull_request")
+    return None
 
 
 def _pr_workflows():
@@ -120,6 +148,36 @@ def test_the_registry_has_no_stale_entries(pr_workflows):
         f"these are registered but no longer trigger on pull_request: "
         f"{sorted(stale)}"
     )
+
+
+def test_workflows_recorded_as_not_requirable_really_are_not(pr_workflows):
+    """A NOT_REQUIRED reason must be true of the workflow, not just plausible.
+
+    `test_exclusions_are_justified` does this for CANNOT_RUN_ON_PR; without a
+    counterpart here the reasons are free text that drifts with the suite green
+    -- and one of them already had: book-build.yml was recorded as skipping
+    because its build-pdf job is conditional, when its `validate` job carries no
+    `if:` at all and the real reason is the paths filter on its trigger.
+
+    Either shape makes the workflow unrequirable, and for the same underlying
+    reason: the status never arrives on a pull request that does not match, so
+    branch protection waits for it forever instead of going red.
+    """
+    for workflow, reason in NOT_REQUIRED.items():
+        doc = pr_workflows[workflow]
+        trigger = _pull_request_trigger(doc) or {}
+        filtered = isinstance(trigger, dict) and (
+            "paths" in trigger or "paths-ignore" in trigger
+        )
+        jobs = doc["jobs"]
+        all_conditional = all(job.get("if") for job in jobs.values())
+        assert filtered or all_conditional, (
+            f"{workflow} is recorded as not requirable ({reason!r}), but its "
+            f"pull_request trigger has no paths/paths-ignore filter and these "
+            f"jobs run unconditionally: "
+            f"{sorted(j for j, c in jobs.items() if not c.get('if'))}. Either "
+            f"the reason is wrong or the workflow should be required."
+        )
 
 
 def test_required_names_are_unique():
@@ -204,15 +262,29 @@ def test_exclusions_are_justified(pr_workflows):
 
 # ---- the rule itself, executed rather than pattern-matched -------------------
 
-def _run_gate(payload):
+def _run_gate(payload, argv=None):
     return subprocess.run(
-        ["bash", str(GATE_SCRIPT)], input=payload,
+        argv or ["bash", str(GATE_SCRIPT)], input=payload,
         capture_output=True, text=True,
     ).returncode
 
 
 def test_gate_script_exists_and_is_executable():
     assert GATE_SCRIPT.is_file(), f"{GATE_SCRIPT} is missing"
+    # The gates pipe into the path itself, so the mode matters. It is committed
+    # 100755, but `git update-index --chmod=-x`, a core.fileMode=false checkout
+    # or a zip export would strip it and break all three gates at once.
+    assert os.access(GATE_SCRIPT, os.X_OK), (
+        f"{GATE_SCRIPT} is not executable, but the gate jobs invoke it as a "
+        f"command rather than passing it to bash."
+    )
+
+
+def test_gate_script_runs_the_way_the_workflows_invoke_it():
+    """The parametrized cases say `bash <script>`; the workflows do not."""
+    direct = [str(GATE_SCRIPT)]
+    assert _run_gate(json.dumps({"a": {"result": "success"}}), direct) == 0
+    assert _run_gate(json.dumps({"a": {"result": "skipped"}}), direct) == 1
 
 
 @pytest.mark.parametrize("results,expected", [
@@ -250,4 +322,30 @@ def test_every_gate_invokes_the_shared_script(pr_workflows):
             f"{workflow}: {job_id!r} does not call "
             f".github/scripts/ci-gate-check.sh, so its behaviour is not "
             f"covered by the tests above."
+        )
+
+
+def test_every_gate_checks_out_the_repository_before_running_the_script(
+    pr_workflows,
+):
+    """Grepping the `run:` text is not evidence that the script can run.
+
+    `Full-stack integration summary` invoked the script with no checkout step,
+    so it exited 127 on a missing file -- red for a reason unrelated to its
+    dependencies and never green, which would make a required check on that
+    name block every merge. The test above passed on that commit.
+    """
+    for workflow, (job_id, _) in REQUIRED_CHECKS.items():
+        job = pr_workflows[workflow]["jobs"][job_id]
+        steps = job.get("steps", [])
+        runs = "\n".join(str(s.get("run", "")) for s in steps)
+        if ".github/scripts/" not in runs:
+            continue
+        assert any(
+            str(s.get("uses", "")).startswith("actions/checkout")
+            for s in steps
+        ), (
+            f"{workflow}: {job_id!r} runs a script from the repository but "
+            f"never checks the repository out, so the step exits 127 and the "
+            f"check can never report success."
         )
