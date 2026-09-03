@@ -11,7 +11,9 @@
  * them rejected low-order public keys. Nothing could notice: there is no
  * shared build, and the two are far too different to diff.
  *
- * Both repos compile this identical file and assert the digest below, so a
+ * Both repos compile this identical file. Each side's driver recomputes
+ * the digest over these vectors and compares it to a literal pinned in
+ * its own committed source, so an edit here fails there. Divergence is
  * change on one side that does not reach the other is visible in review as
  * two different digests.
  */

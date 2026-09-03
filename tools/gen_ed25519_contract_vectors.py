@@ -10,9 +10,13 @@ in either repo could notice: there is no shared build, and the implementations
 are too different to diff.
 
 This emits a header of pure test data that both repos compile against, so the
-two verifiers are held to one contract. The digest printed at the end is
-asserted by the tests on both sides; if either copy is edited, that side's
-build fails and the digests visibly stop matching.
+two verifiers are held to one contract.
+
+The digest below is recomputed at run time by each side's driver, over the
+vector bytes rather than read back from this header, and compared against a
+literal pinned in committed test source. So a hand-edited vector fails as
+loudly as a regenerated corpus -- which matters, because the hand edit is the
+one a reviewer would not see in a diff of 76 byte arrays.
 
 Regenerate with:
     python3 tools/gen_ed25519_contract_vectors.py > tests/vectors/ed25519_contract_vectors.h
@@ -106,7 +110,9 @@ def main():
     w(" * opposite return conventions, the same job -- and for a while only one of\n")
     w(" * them rejected low-order public keys. Nothing could notice: there is no\n")
     w(" * shared build, and the two are far too different to diff.\n *\n")
-    w(" * Both repos compile this identical file and assert the digest below, so a\n")
+    w(" * Both repos compile this identical file. Each side's driver recomputes\n")
+    w(" * the digest over these vectors and compares it to a literal pinned in\n")
+    w(" * its own committed source, so an edit here fails there. Divergence is\n")
     w(" * change on one side that does not reach the other is visible in review as\n")
     w(" * two different digests.\n */\n\n")
     w("#ifndef EOS_ED25519_CONTRACT_VECTORS_H\n#define EOS_ED25519_CONTRACT_VECTORS_H\n\n")

@@ -96,10 +96,8 @@ target_link_libraries(test_crypto_ed25519_loworder PRIVATE eos_crypto)
 add_test(NAME test_crypto_ed25519_loworder COMMAND test_crypto_ed25519_loworder)
 
 # --- test_ed25519_canonical_s: the [0, L) boundary, reached directly ---
-# Compiles ed25519_verify.c a second time with EOS_ED25519_TEST_HOOKS so
-# sc_is_canonical() has external linkage. The corpus cannot reach this
-# boundary: through the public API, S == L and a failed group equation are
-# both simply 0.
+# The corpus cannot reach this boundary: through the public API, S == L and
+# a failed group equation are both simply 0.
 # The test #includes ed25519_verify.c to reach its static, so that source is
 # not listed here. eos_crypto is still linked for the ge_*/sha512 helpers the
 # included unit calls: a static archive contributes only the objects needed
@@ -113,11 +111,6 @@ target_link_libraries(test_ed25519_canonical_s PRIVATE eos_crypto)
 add_test(NAME test_ed25519_canonical_s COMMAND test_ed25519_canonical_s)
 
 # --- test_ed25519_contract: the corpus shared byte-for-byte with eBoot ---
-# The vector table is 54 KB of generated data. It is produced into the build
-# tree rather than committed, because the identical file would otherwise be
-# checked in to both eBoot and this repo and kept in step by hand. The
-# generator is pure stdlib and deterministic, so both sides derive the same
-# EOS_ED25519_CONTRACT_DIGEST -- which is what the two tests print and compare.
 # tests/vectors/ed25519_contract_vectors.h is committed, not generated at
 # build time. What the signature verifier was tested against belongs in the
 # repository: from a tag you should be able to see which 76 vectors ran.

@@ -154,13 +154,13 @@ int ed25519_public_key_is_usable(const unsigned char *public_key) {
  * Compared most-significant byte first, which is a comparison against a public
  * constant and reveals nothing about any secret: S is public.
  */
-/* Linked, not static, when the test hook is on. Through the public API this
- * boundary is unreachable: a signature with S == L and one that simply fails
- * the verification equation both return 0, so the corpus cannot tell an
- * off-by-one here from an ordinary rejection -- and an off-by-one that
- * refused a valid S = L - 1 would satisfy every vector in the corpus while
- * rejecting real signatures in the field. It is a pure function of 32 bytes,
- * so it can be tested directly and without generating any signatures.
+/* Through the public API this boundary is unreachable: a signature with
+ * S == L and one that simply fails the verification equation both return 0,
+ * so the corpus cannot tell an off-by-one here from an ordinary rejection
+ * -- and an off-by-one that refused a valid S = L - 1 would satisfy every
+ * vector in the corpus while rejecting real signatures in the field. It is
+ * a pure function of 32 bytes, so it can be tested directly and without
+ * generating any signatures.
  *
  * It stays static. tests/test_ed25519_canonical_s.c includes this translation
  * unit to reach it, rather than the file being compiled twice with a macro
