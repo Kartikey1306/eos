@@ -51,7 +51,31 @@ int main(void)
                             NULL) == EOS_ERR_CHECKSUM);
     ASSERT(eos_fetch_source("https://example.invalid/src.tgz", "/tmp/eos_t",
                             NULL) == EOS_ERR_CHECKSUM);
-    PASS("every archive form this fetcher extracts is covered");
+    ASSERT(eos_fetch_source("https://example.invalid/src.zip", "/tmp/eos_t",
+                            NULL) == EOS_ERR_CHECKSUM);
+    PASS(".tar.gz, .tar.xz, .tgz and .zip are all refused without a digest");
+
+    /* The defect this PR was reported as leaving open: a git URL took the
+     * git branch, which ignored expected_hash entirely and returned EOS_OK.
+     * Both shapes are refused before the network now -- no digest, and (in
+     * the guard's eyes) a digest that fetch_git will actually compare. */
+    ASSERT(eos_fetch_source("https://example.invalid/proj.git", "/tmp/eos_t",
+                            NULL) == EOS_ERR_CHECKSUM);
+    ASSERT(eos_fetch_source("git://example.invalid/proj", "/tmp/eos_t",
+                            "") == EOS_ERR_CHECKSUM);
+    ASSERT(eos_fetch_source("git@example.invalid:proj", "/tmp/eos_t",
+                            NULL) == EOS_ERR_CHECKSUM);
+    PASS("a git source with no pinned commit is refused, not silently cloned");
+
+    /* is_git_url() was strstr(url, ".git"), so any host under *.github.io --
+     * including this organisation's own pages -- and any archive whose path
+     * contained ".git" took the git branch and skipped the digest check.
+     * These are tarballs and must be treated as tarballs. */
+    ASSERT(eos_fetch_source("https://embeddedos-org.github.io/x/src.tar.gz",
+                            "/tmp/eos_t", NULL) == EOS_ERR_CHECKSUM);
+    ASSERT(eos_fetch_source("https://example.invalid/.github/rel.tar.gz",
+                            "/tmp/eos_t", NULL) == EOS_ERR_CHECKSUM);
+    PASS("a URL merely containing \".git\" is not mistaken for a git repository");
 
     /* The refusal must not have widened into rejecting everything: an unsafe
      * URL keeps its own error, and a shell metacharacter is still caught. */
@@ -64,6 +88,6 @@ int main(void)
     ASSERT(eos_fetch_source(NULL, "/tmp/eos_t", NULL) == EOS_OK);
     PASS("no URL is still a no-op rather than an error");
 
-    printf("\n%d/5 tests passed\n", tests_passed);
-    return tests_passed == 5 ? 0 : 1;
+    printf("\n%d/7 tests passed\n", tests_passed);
+    return tests_passed == 7 ? 0 : 1;
 }
