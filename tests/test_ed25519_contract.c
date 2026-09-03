@@ -29,6 +29,26 @@
 #include <stdio.h>
 #include <string.h>
 
+/* The corpus digest, pinned in committed source.
+ *
+ * EOS_ED25519_CONTRACT_DIGEST comes from the generated header, which this
+ * repo's own copy of tools/gen_ed25519_contract_vectors.py just wrote -- a
+ * hash the generator took over its own output. Comparing it against nothing
+ * made the drift guard unfalsifiable: edit the generator here and not in
+ * eBoot and this repo regenerates a self-consistent corpus with a new digest,
+ * the test still exits 0, and the divergence is visible only to a human
+ * reading two CI logs in two repositories.
+ *
+ * This value must stay byte-identical to the one in eBoot's
+ * tests/unit/test_ed25519_contract.c. The count and accept-count are pinned
+ * for the same reason: both are generated, so a corpus that silently shrank
+ * would otherwise still pass.
+ */
+#define EOS_ED25519_CONTRACT_EXPECTED \
+    "1059febedae2b3e3dfaa1ef5b419fb37ed7f0d53b377a3250b53b95a546282a2"
+#define EOS_ED25519_CONTRACT_EXPECTED_COUNT     76
+#define EOS_ED25519_CONTRACT_EXPECTED_ACCEPTS   3
+
 int main(void) {
     unsigned failed = 0, accepted = 0, refused = 0, positives = 0;
     int i;
@@ -36,6 +56,25 @@ int main(void) {
     printf("Ed25519 contract vectors\n");
     printf("  digest: %s\n", EOS_ED25519_CONTRACT_DIGEST);
     printf("  count:  %d\n\n", EOS_ED25519_CONTRACT_COUNT);
+
+    if (strcmp(EOS_ED25519_CONTRACT_DIGEST,
+               EOS_ED25519_CONTRACT_EXPECTED) != 0) {
+        printf("[FAIL] corpus digest changed\n"
+               "       expected %s\n"
+               "       got      %s\n"
+               "       The generator was edited, or the two repos' copies\n"
+               "       have diverged. Re-derive, confirm eos and eBoot agree,\n"
+               "       then update the pin in BOTH.\n",
+               EOS_ED25519_CONTRACT_EXPECTED, EOS_ED25519_CONTRACT_DIGEST);
+        return 1;
+    }
+
+    if (EOS_ED25519_CONTRACT_COUNT != EOS_ED25519_CONTRACT_EXPECTED_COUNT) {
+        printf("[FAIL] corpus is %d vectors, expected %d\n",
+               EOS_ED25519_CONTRACT_COUNT,
+               EOS_ED25519_CONTRACT_EXPECTED_COUNT);
+        return 1;
+    }
 
     for (i = 0; i < EOS_ED25519_CONTRACT_COUNT; i++) {
         const eos_ed25519_contract_vector_t *v = &eos_ed25519_contract_vectors[i];
@@ -68,9 +107,10 @@ int main(void) {
     /* A verifier that refuses everything satisfies all 73 negative vectors, so
      * the three RFC 8032 signatures carry the whole weight of proving this
      * still accepts real ones. Fail loudly if they are ever dropped. */
-    if (positives == 0) {
-        printf("[FAIL] the corpus has no accept vectors; "
-               "a verifier that refuses everything would pass\n");
+    if (positives != EOS_ED25519_CONTRACT_EXPECTED_ACCEPTS) {
+        printf("[FAIL] the corpus has %u accept vectors, expected %d; "
+               "a verifier that refuses everything would otherwise pass\n",
+               positives, EOS_ED25519_CONTRACT_EXPECTED_ACCEPTS);
         return 1;
     }
 

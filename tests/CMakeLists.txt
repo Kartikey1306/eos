@@ -95,28 +95,43 @@ add_executable(test_crypto_ed25519_loworder test_crypto_ed25519_loworder.c)
 target_link_libraries(test_crypto_ed25519_loworder PRIVATE eos_crypto)
 add_test(NAME test_crypto_ed25519_loworder COMMAND test_crypto_ed25519_loworder)
 
+# --- test_ed25519_canonical_s: the [0, L) boundary, reached directly ---
+# Compiles ed25519_verify.c a second time with EOS_ED25519_TEST_HOOKS so
+# sc_is_canonical() has external linkage. The corpus cannot reach this
+# boundary: through the public API, S == L and a failed group equation are
+# both simply 0.
+add_executable(test_ed25519_canonical_s
+    test_ed25519_canonical_s.c
+    ${CMAKE_SOURCE_DIR}/services/crypto/src/ed25519_verify.c)
+target_compile_definitions(test_ed25519_canonical_s PRIVATE EOS_ED25519_TEST_HOOKS)
+target_include_directories(test_ed25519_canonical_s PRIVATE
+    ${CMAKE_SOURCE_DIR}/services/crypto/include)
+target_link_libraries(test_ed25519_canonical_s PRIVATE eos_crypto)
+add_test(NAME test_ed25519_canonical_s COMMAND test_ed25519_canonical_s)
+
 # --- test_ed25519_contract: the corpus shared byte-for-byte with eBoot ---
 # The vector table is 54 KB of generated data. It is produced into the build
 # tree rather than committed, because the identical file would otherwise be
 # checked in to both eBoot and this repo and kept in step by hand. The
 # generator is pure stdlib and deterministic, so both sides derive the same
 # EOS_ED25519_CONTRACT_DIGEST -- which is what the two tests print and compare.
-find_package(Python3 COMPONENTS Interpreter REQUIRED)
-set(ED25519_CONTRACT_VECTORS
-    ${CMAKE_CURRENT_BINARY_DIR}/vectors/ed25519_contract_vectors.h)
-add_custom_command(
-    OUTPUT ${ED25519_CONTRACT_VECTORS}
-    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/vectors
-    COMMAND ${Python3_EXECUTABLE}
-            ${CMAKE_SOURCE_DIR}/tools/gen_ed25519_contract_vectors.py
-            -o ${ED25519_CONTRACT_VECTORS}
-    DEPENDS ${CMAKE_SOURCE_DIR}/tools/gen_ed25519_contract_vectors.py
-    COMMENT "Generating the shared Ed25519 contract vectors"
-    VERBATIM)
-add_executable(test_ed25519_contract test_ed25519_contract.c ${ED25519_CONTRACT_VECTORS})
+# tests/vectors/ed25519_contract_vectors.h is committed, not generated at
+# build time. What the signature verifier was tested against belongs in the
+# repository: from a tag you should be able to see which 76 vectors ran.
+#
+# Generating it also created a shadowing hazard -- CMAKE_CURRENT_SOURCE_DIR
+# came first on the include path, so a stale tests/vectors/ copy in the
+# working tree silently won over the generated one, and the PR body's own
+# re-derivation command wrote to exactly that path. And it made Python 3 a
+# hard configure-time dependency of a pure-C test suite.
+#
+# The reason it was generated -- two repos holding the same file and keeping
+# it in step by hand -- is what the digest pinned in test_ed25519_contract.c
+# now handles: neither copy can change without failing.
+add_executable(test_ed25519_contract test_ed25519_contract.c)
 target_link_libraries(test_ed25519_contract PRIVATE eos_crypto)
 target_include_directories(test_ed25519_contract PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR})
+    ${CMAKE_CURRENT_SOURCE_DIR})
 add_test(NAME test_ed25519_contract COMMAND test_ed25519_contract)
 
 # --- test_crypto_sha512: SHA-512 against NIST vectors ---
