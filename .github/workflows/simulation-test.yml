@@ -4,7 +4,11 @@ on:
   schedule:
     - cron: "0 3 * * *"
   workflow_dispatch:
-
+  # A change to this file tests itself; see the note in eosim-sanity.yml.
+  pull_request:
+    paths:
+      - '.github/workflows/simulation-test.yml'
+      - '.github/workflows/eosim-sanity.yml'
 permissions:
   contents: read
 
@@ -17,7 +21,7 @@ env:
   # v3.0.1 -- so `git clone --branch v0.1.0` failed with "Remote branch
   # v0.1.0 not found in upstream origin" on every run. v1.5.0 is the
   # release marked Latest, and is what eosim-sanity.yml already pins.
-  EOSIM_VERSION: "1.5.0"
+  EOSIM_COMMIT: "7dec3460cba76083b6645eb4a867e39aa2af97df"   # v1.5.0 as of 2026-09-03
 
 jobs:
   simulate:
@@ -45,8 +49,9 @@ jobs:
           python-version: "3.12"
       - name: Install EoSim from source
         run: |
-          git clone --depth 1 --branch v${{ env.EOSIM_VERSION }} https://github.com/embeddedos-org/EoSim.git /tmp/EoSim
-          pip install -e /tmp/EoSim
+          git clone --filter=blob:none https://github.com/embeddedos-org/EoSim.git "${{ runner.temp }}/EoSim"
+          git -C "${{ runner.temp }}/EoSim" checkout --detach ${{ env.EOSIM_COMMIT }}
+          pip install "${{ runner.temp }}/EoSim"
       - name: Validate platform
         run: eosim list
       - name: Run simulation
@@ -74,8 +79,9 @@ jobs:
           python-version: "3.12"
       - name: Install EoSim from source
         run: |
-          git clone --depth 1 --branch v${{ env.EOSIM_VERSION }} https://github.com/embeddedos-org/EoSim.git /tmp/EoSim
-          pip install -e /tmp/EoSim
+          git clone --filter=blob:none https://github.com/embeddedos-org/EoSim.git "${{ runner.temp }}/EoSim"
+          git -C "${{ runner.temp }}/EoSim" checkout --detach ${{ env.EOSIM_COMMIT }}
+          pip install "${{ runner.temp }}/EoSim"
       - name: Validate all platforms
         run: eosim list && eosim doctor
 
