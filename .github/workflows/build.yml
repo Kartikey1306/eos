@@ -169,3 +169,19 @@ jobs:
             echo "✗ QEMU boot test FAILED"
             exit 1
           fi
+
+  # ── Required check ────────────────────────────────────────────────────────
+  # See .github/STANDARDS.md. One requirable name per workflow: this workflow
+  # produces three PR statuses and branch protection can only name checks, so
+  # without this there is no single name that is red when any of them fails.
+  build-gate:
+    name: Build Gate
+    runs-on: ubuntu-22.04
+    needs: [test-host, build-arm, test-qemu]
+    if: always()
+    steps:
+      - uses: actions/checkout@v4
+      - name: Every job in this workflow must have succeeded
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: printf '%s' "$RESULTS" | .github/scripts/ci-gate-check.sh

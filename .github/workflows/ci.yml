@@ -233,18 +233,8 @@ jobs:
     needs: [test, default-config, build-arm, static-analysis]
     if: always()
     steps:
+      - uses: actions/checkout@v4
       - name: Every job in this workflow must have succeeded
         env:
           RESULTS: ${{ toJSON(needs) }}
-        run: |
-          printf '%s\n' "$RESULTS"
-          bad=$(printf '%s' "$RESULTS" | jq -r '
-            to_entries[]
-            | select(.value.result != "success")
-            | "  \(.key): \(.value.result)"')
-          if [ -n "$bad" ]; then
-            echo "::error::CI Gate failed. These jobs did not succeed:"
-            printf '%s\n' "$bad"
-            exit 1
-          fi
-          echo "All jobs succeeded."
+        run: printf '%s' "$RESULTS" | .github/scripts/ci-gate-check.sh
