@@ -8,6 +8,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <sys/stat.h>
+#include <ctype.h>
 
 #ifdef _WIN32
 #include <direct.h>
@@ -67,12 +68,32 @@ static int is_path_safe(const char *path) {
 
 /* Two busybox call sites interpolate without surrounding quotes
  * (`make -C "%s" %s` and ` CROSS_COMPILE=%s`), where a single space is
- * already enough to turn one argument into two. Those use this instead. */
+ * already enough to turn one argument into two. Those use this instead.
+ *
+ * This was a second denylist -- space, tab, *, ?, ~ -- and it had the same
+ * shape of hole as the first one: it missed [ and ] (a glob character class)
+ * and { } (brace expansion, which /bin/sh performs when it is bash), all of
+ * which reach make unquoted. Answering an incomplete denylist with another
+ * denylist just moves the next gap further out.
+ *
+ * "One shell word" has a small positive definition, so it is written as one.
+ * isalnum() plus ._/+=:- covers every defconfig target, cross-compile prefix,
+ * hash algorithm name and hex root hash this tree uses, and an allowlist
+ * cannot be incomplete.
+ *
+ * A leading '-' is refused separately: it is built from allowed characters
+ * but turns `make -C dir <defconfig>` into an option rather than a target.
+ *
+ * The empty string is a word. An unset cross_compile is the ordinary case,
+ * and every caller checks the field for content before interpolating it. */
 static int is_word_safe(const char *word) {
     const unsigned char *p;
-    if (!is_path_safe(word)) return 0;
+    if (!word) return 0;
+    if (word[0] == '-') return 0;
     for (p = (const unsigned char *)word; *p; p++) {
-        if (*p == ' ' || *p == '\t' || *p == '*' || *p == '?' || *p == '~') return 0;
+        if (isalnum(*p)) continue;
+        if (strchr("._/+=:-", (char)*p)) continue;
+        return 0;
     }
     return 1;
 }
@@ -555,15 +576,25 @@ int eos_busybox_configure(EosBusybox *bb) {
     if (!is_path_safe(bb->source_dir)) return -1;
 #ifndef _WIN32
     char cmd[2048];
+    int n;
+    /* offset accumulated snprintf's *would-be* length, so a truncating
+     * segment pushed it past sizeof(cmd): cmd + offset out of bounds and
+     * sizeof(cmd) - offset underflowing to a huge size_t. Unreachable at the
+     * current field widths (512 + 128 + 128 against 2048) and nothing ties
+     * the two together, so it is checked rather than reasoned about. */
     int offset = snprintf(cmd, sizeof(cmd), "make -C \"%s\" %s",
                           bb->source_dir, bb->defconfig);
+    if (offset < 0 || (size_t)offset >= sizeof(cmd)) return -1;
     if (bb->cross_compile[0]) {
-        offset += snprintf(cmd + offset, sizeof(cmd) - (size_t)offset,
-                          " CROSS_COMPILE=%s", bb->cross_compile);
+        n = snprintf(cmd + offset, sizeof(cmd) - (size_t)offset,
+                     " CROSS_COMPILE=%s", bb->cross_compile);
+        if (n < 0 || (size_t)n >= sizeof(cmd) - (size_t)offset) return -1;
+        offset += n;
     }
     if (bb->use_static) {
-        snprintf(cmd + offset, sizeof(cmd) - (size_t)offset,
-                " CONFIG_STATIC=y");
+        n = snprintf(cmd + offset, sizeof(cmd) - (size_t)offset,
+                     " CONFIG_STATIC=y");
+        if (n < 0 || (size_t)n >= sizeof(cmd) - (size_t)offset) return -1;
     }
     return system(cmd) == 0 ? 0 : -1;
 #else
@@ -576,10 +607,13 @@ int eos_busybox_build(EosBusybox *bb) {
     if (!is_path_safe(bb->source_dir) || !is_word_safe(bb->cross_compile)) return -1;
 #ifndef _WIN32
     char cmd[2048];
+    /* Same accumulate-the-would-be-length hazard as configure(). */
     int offset = snprintf(cmd, sizeof(cmd), "make -C \"%s\" -j4", bb->source_dir);
+    if (offset < 0 || (size_t)offset >= sizeof(cmd)) return -1;
     if (bb->cross_compile[0]) {
-        snprintf(cmd + offset, sizeof(cmd) - (size_t)offset,
-                " CROSS_COMPILE=%s", bb->cross_compile);
+        int n = snprintf(cmd + offset, sizeof(cmd) - (size_t)offset,
+                         " CROSS_COMPILE=%s", bb->cross_compile);
+        if (n < 0 || (size_t)n >= sizeof(cmd) - (size_t)offset) return -1;
     }
     return system(cmd) == 0 ? 0 : -1;
 #else

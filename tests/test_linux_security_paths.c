@@ -36,6 +36,14 @@ static int failures;
     if (failures == (before)) printf("[PASS] %s\n", (msg)); \
 } while (0)
 
+/* Every environment dependency in this file is probed rather than assumed:
+ * a missing build tool must print [SKIP], not count as a security failure. */
+static int have_tool(const char *tool) {
+    char probe[128];
+    snprintf(probe, sizeof probe, "command -v %s >/dev/null 2>&1", tool);
+    return system(probe) == 0;
+}
+
 /* Payloads that a shell reads as syntax. The first two passed the original
  * denylist (";|&><$()\"'") -- it had no backtick and no newline. */
 static const char *HOSTILE[] = {
@@ -156,6 +164,74 @@ static void test_busybox_refuses_hostile_fields(void) {
     PASS_IF_CLEAN(f0, "busybox refuses hostile source_dir/defconfig/cross_compile");
 }
 
+/* defconfig and cross_compile are interpolated unquoted, so they have to be
+ * one shell word. That used to be a denylist -- space, tab, *, ?, ~ -- which
+ * is the same shape as the metacharacter denylist this PR is about, and it
+ * had the same kind of hole: [ and ] are a glob character class, { and } are
+ * brace expansion when /bin/sh is bash, and a leading - makes make read the
+ * word as an option instead of a target. None of those is command execution;
+ * all of them are a make invocation other than the one that was asked for. */
+static const char *NOT_ONE_WORD[] = {
+    "def[c]onfig",       /* glob character class */
+    "def{a,b}config",    /* brace expansion */
+    "defconfig*",        /* glob */
+    "defconfi?",         /* glob */
+    "~/defconfig",       /* tilde expansion */
+    "defconfig extra",   /* a second argument */
+    "defconfig\textra",  /* likewise, with a tab */
+    "--version",         /* an option, not a target */
+    "def#config",        /* comment character */
+    "def%config",        /* pattern rule character */
+    "def!config",        /* history expansion */
+    "defconfig\xc3\xa9",   /* non-ASCII */
+};
+
+/* And the values a real caller passes, which must all still be accepted. */
+static const char *ONE_WORD[] = {
+    "defconfig", "menuconfig", "allnoconfig",
+    "busybox-1.36.1_defconfig", "configs/eos.config",
+    "arm-linux-gnueabihf-", "aarch64-none-elf-", "x86_64-pc-linux-gnu-",
+    "sha256", "sha512", "CONFIG_X=y", "a+b", "a:b", "a.b", "a-b", "a_b",
+};
+
+static void test_unquoted_fields_must_be_one_shell_word(void) {
+    int f0 = failures;
+    EosBusybox bb;
+    unsigned i;
+
+    for (i = 0; i < sizeof NOT_ONE_WORD / sizeof *NOT_ONE_WORD; i++) {
+        eos_busybox_init(&bb);
+        strncpy(bb.source_dir, "/tmp/bb", sizeof(bb.source_dir) - 1);
+        strncpy(bb.defconfig, NOT_ONE_WORD[i], sizeof(bb.defconfig) - 1);
+        CHECK(eos_busybox_configure(&bb) != 0);
+
+        eos_busybox_init(&bb);
+        strncpy(bb.source_dir, "/tmp/bb", sizeof(bb.source_dir) - 1);
+        strncpy(bb.cross_compile, NOT_ONE_WORD[i], sizeof(bb.cross_compile) - 1);
+        CHECK(eos_busybox_build(&bb) != 0);
+    }
+
+    /* The counter-check for the allowlist: it must not have narrowed the
+     * predicate to the point where a real defconfig or cross-compile prefix
+     * is refused. dv->hash_algo is checked by the same function, so an
+     * accepted value has to reach veritysetup rather than be refused early --
+     * observable as eos_dmverity_verify() getting past its guard, which the
+     * hostile cases above never do. */
+    for (i = 0; i < sizeof ONE_WORD / sizeof *ONE_WORD; i++) {
+        EosDmVerity dv;
+        eos_dmverity_init(&dv);
+        strncpy(dv.hash_algo, ONE_WORD[i], sizeof(dv.hash_algo) - 1);
+        strncpy(dv.hash_device, "/tmp/hash.img", sizeof(dv.hash_device) - 1);
+        strncpy(dv.root_hash, "deadbeef", sizeof(dv.root_hash) - 1);
+        /* -1 from the guard and non-zero from veritysetup are the same
+         * number, so this asserts on the field the guard sets instead. */
+        (void)eos_dmverity_verify(&dv, "/tmp/image.img");
+        CHECK(dv.verified == 0);
+    }
+
+    PASS_IF_CLEAN(f0, "unquoted fields must be one shell word");
+}
+
 static void test_ima_sign_refuses_hostile_paths(void) {
     int f0 = failures;
     EosIma ima;
@@ -177,6 +253,10 @@ static void test_ordinary_paths_still_reach_the_shell(void) {
     int fd;
     EosBusybox bb;
 
+    if (!have_tool("make")) {
+        printf("[SKIP] make is not installed; the counter-check cannot run\n");
+        return;
+    }
     if (!mkdtemp(dir)) { fprintf(stderr, "[SKIP] mkdtemp failed\n"); return; }
     snprintf(mk, sizeof mk, "%s/Makefile", dir);
     snprintf(sentinel, sizeof sentinel, "%s/ran", dir);
@@ -195,6 +275,11 @@ static void test_ordinary_paths_still_reach_the_shell(void) {
     eos_busybox_init(&bb);
     strncpy(bb.source_dir, dir, sizeof(bb.source_dir) - 1);
     strncpy(bb.defconfig, "defconfig", sizeof(bb.defconfig) - 1);
+    /* A real cross-compile prefix goes through the same allowlist and has to
+     * survive it -- an allowlist that rejected this would break every cross
+     * build while passing every hostile-input test in this file. */
+    strncpy(bb.cross_compile, "arm-linux-gnueabihf-",
+            sizeof(bb.cross_compile) - 1);
     CHECK(eos_busybox_configure(&bb) == 0);
 
     /* The sentinel is the whole point: it only exists if the command was
@@ -218,13 +303,25 @@ static void test_ordinary_paths_still_reach_the_shell(void) {
 static void test_the_default_source_dir_path_is_validated(void) {
     int f0 = failures;
     char dir[] = "/tmp/eos_lsp_ver_XXXXXX";
-    char sentinel[320], hostile_version[192];
+    char sentinel[64], hostile_version[96];
     EosBusybox bb;
+    int n;
 
+    /* This test needs no `make`: command substitution is performed by the
+     * shell while it expands the word, before it looks for the program. If
+     * the guard lets the string through, the backtick runs whether or not
+     * make exists. */
     if (!mkdtemp(dir)) { fprintf(stderr, "[SKIP] mkdtemp failed\n"); return; }
-    snprintf(sentinel, sizeof sentinel, "%s/pwned", dir);
-    snprintf(hostile_version, sizeof hostile_version,
-             "1.36.1`touch %s`", sentinel);
+    n = snprintf(sentinel, sizeof sentinel, "%s/pwned", dir);
+    CHECK(n > 0 && (size_t)n < sizeof sentinel);
+    n = snprintf(hostile_version, sizeof hostile_version,
+                 "1.36.1`touch %s`", sentinel);
+    /* A truncated payload loses its closing backtick and stops being an
+     * injection -- and the test would then pass while testing nothing. The
+     * same applies to the copy into bb.version below, which is why the
+     * length is checked against the field as well as against the buffer. */
+    CHECK(n > 0 && (size_t)n < sizeof hostile_version);
+    CHECK(strlen(hostile_version) < sizeof bb.version);
 
     /* The setter must refuse it outright. */
     eos_busybox_init(&bb);
@@ -275,7 +372,7 @@ static void test_ima_sign_reports_failure_when_evmctl_is_absent(void) {
     eos_ima_init(&ima, EOS_IMA_ENFORCE);
     strncpy(ima.key_file, "/tmp/key.pub", sizeof(ima.key_file) - 1);
 
-    if (system("command -v evmctl >/dev/null 2>&1") == 0) {
+    if (have_tool("evmctl")) {
         printf("[SKIP] evmctl is installed; "
                "the absent-tool path cannot be exercised here\n");
     } else {
@@ -287,15 +384,73 @@ static void test_ima_sign_reports_failure_when_evmctl_is_absent(void) {
     rmdir(dir);
 }
 
+
+/* ---- the rootfs entry points --------------------------------------------
+ *
+ * These four were the untested half of the guard: the review's finding that
+ * rootfs_dir reaches `cp` through `path` was fixed with no case covering it.
+ * Refusal is asserted by side effect, not by return code -- these functions
+ * have several ways to return -1 and only one of them means "the guard
+ * caught it". */
+static void test_rootfs_entry_points_refuse_a_hostile_dir(void) {
+    int f0 = failures;
+    char dir[] = "/tmp/eos_lsp_rootfs_XXXXXX";
+    char sentinel[64], hostile[128];
+    int n;
+    EosSelinux se;
+    EosIma ima;
+    EosBusybox bb;
+
+    if (!mkdtemp(dir)) { fprintf(stderr, "[SKIP] mkdtemp failed\n"); return; }
+    n = snprintf(sentinel, sizeof sentinel, "%s/pwned", dir);
+    CHECK(n > 0 && (size_t)n < sizeof sentinel);
+    n = snprintf(hostile, sizeof hostile, "%s/`touch %s`", dir, sentinel);
+    CHECK(n > 0 && (size_t)n < sizeof hostile);
+
+    eos_selinux_init(&se, EOS_SELINUX_ENFORCING);
+    strncpy(se.policy_name, "targeted", sizeof(se.policy_name) - 1);
+    CHECK(eos_selinux_install_to_rootfs(&se, hostile) != 0);
+
+    eos_selinux_init(&se, EOS_SELINUX_ENFORCING);
+    strncpy(se.file_contexts, "/etc/selinux/file_contexts",
+            sizeof(se.file_contexts) - 1);
+    CHECK(eos_selinux_label_rootfs(&se, hostile) != 0);
+
+    eos_ima_init(&ima, EOS_IMA_ENFORCE);
+    CHECK(eos_ima_install_to_rootfs(&ima, hostile) != 0);
+
+    /* The guard sits above the `mode == EOS_IMA_OFF` early return, so a
+     * malformed rootfs_dir is refused even when IMA is off -- a deliberate
+     * change of that function's contract, pinned here so it stays one. */
+    eos_ima_init(&ima, EOS_IMA_OFF);
+    CHECK(eos_ima_install_to_rootfs(&ima, hostile) != 0);
+
+    eos_busybox_init(&bb);
+    strncpy(bb.source_dir, dir, sizeof(bb.source_dir) - 1);
+    CHECK(eos_busybox_install_to_rootfs(&bb, hostile) != 0);
+
+    CHECK(access(sentinel, F_OK) != 0);
+    if (access(sentinel, F_OK) == 0) {
+        fprintf(stderr, "[FAIL] a rootfs entry point executed the injection: "
+                "%s\n", sentinel);
+        remove(sentinel);
+    }
+    rmdir(dir);
+    PASS_IF_CLEAN(f0, "the rootfs entry points refuse a hostile rootfs_dir");
+}
+
+
 int main(void) {
     test_dmverity_verify_refuses_hostile_paths();
     test_dmverity_verify_refuses_hostile_hash_device();
     test_injection_does_not_execute();
     test_dmverity_create_refuses_hostile_paths();
     test_busybox_refuses_hostile_fields();
+    test_unquoted_fields_must_be_one_shell_word();
     test_ima_sign_refuses_hostile_paths();
     test_the_default_source_dir_path_is_validated();
     test_ima_sign_reports_failure_when_evmctl_is_absent();
+    test_rootfs_entry_points_refuse_a_hostile_dir();
     test_ordinary_paths_still_reach_the_shell();
 
     if (failures) {
