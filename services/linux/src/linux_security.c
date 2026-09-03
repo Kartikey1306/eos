@@ -128,9 +128,25 @@ int eos_selinux_install_to_rootfs(const EosSelinux *se, const char *rootfs_dir) 
         MKDIR(path);
 #ifndef _WIN32
         char cmd[2048];
-        snprintf(cmd, sizeof(cmd), "cp -r \"%s/\"* \"%s/\" 2>/dev/null || true",
+        /* The `|| true` hid the copy's exit status and system()'s result was
+         * discarded on top of it, so a failed copy left /etc/selinux/config
+         * naming a policy the rootfs does not contain -- and reported that
+         * with a 0. .ai/security.md, Never: "Report a check as passing
+         * without running it." */
+        snprintf(cmd, sizeof(cmd), "cp -r \"%s/\"* \"%s/\" 2>/dev/null",
                  se->policy_dir, path);
-        system(cmd);
+        if (system(cmd) != 0) {
+            EOS_ERROR("SELinux policy copy failed (%s -> %s); the rootfs "
+                      "config names a policy that is NOT installed.",
+                      se->policy_dir, path);
+            return -1;
+        }
+#else
+        /* No cp here, so the policy is not installed. Returning 0 would be
+         * the same untrue answer the `|| true` gave. */
+        EOS_ERROR("SELinux policy files cannot be installed on this platform; "
+                  "the rootfs config names a policy that is NOT installed.");
+        return -1;
 #endif
     }
     return 0;
@@ -141,22 +157,35 @@ int eos_selinux_label_rootfs(const EosSelinux *se, const char *rootfs_dir) {
     if (!is_path_safe(rootfs_dir) || !is_path_safe(se->file_contexts)) {
         return -1;
     }
+    /* Labeling needs file_contexts. Without it this used to echo a line
+     * about skipping and return 0 -- an unlabeled rootfs reported as a
+     * labeled one. SELinux enforcing over unlabeled files is exactly the
+     * state a caller has to be told about. */
+    if (!se->file_contexts[0]) {
+        EOS_ERROR("SELinux is enabled but no file_contexts is set; the rootfs "
+                  "at %s is NOT labeled.", rootfs_dir);
+        return -1;
+    }
 #ifndef _WIN32
     char cmd[2048];
-    if (se->file_contexts[0]) {
-        snprintf(cmd, sizeof(cmd),
-                 "setfiles -r \"%s\" \"%s\" \"%s\" 2>/dev/null || "
-                 "echo 'setfiles not available — skipping labeling'",
-                 rootfs_dir, se->file_contexts, rootfs_dir);
-    } else {
-        snprintf(cmd, sizeof(cmd),
-                 "echo 'No file_contexts specified — skipping SELinux labeling'");
+    /* The `|| echo` tail masked setfiles' exit status and system()'s result
+     * was discarded on top of it, so on any host without setfiles this
+     * labeled nothing and returned 0. Absent tool and failed tool are both
+     * "not labeled", and neither is a 0. */
+    snprintf(cmd, sizeof(cmd),
+             "setfiles -r \"%s\" \"%s\" \"%s\" 2>/dev/null",
+             rootfs_dir, se->file_contexts, rootfs_dir);
+    if (system(cmd) != 0) {
+        EOS_ERROR("setfiles failed or is not installed; the rootfs at %s is "
+                  "NOT labeled.", rootfs_dir);
+        return -1;
     }
-    system(cmd);
-#else
-    (void)rootfs_dir;
-#endif
     return 0;
+#else
+    EOS_ERROR("SELinux labeling cannot run on this platform; the rootfs at %s "
+              "is NOT labeled.", rootfs_dir);
+    return -1;
+#endif
 }
 
 void eos_selinux_dump(const EosSelinux *se) {
@@ -202,12 +231,19 @@ int eos_ima_install_to_rootfs(const EosIma *ima, const char *rootfs_dir) {
     if (!fp) return -1;
 
     if (ima->policy_file[0]) {
+        /* A named policy file that cannot be opened used to leave an empty
+         * /etc/ima/policy behind and return 0 -- IMA configured to measure
+         * nothing, reported as installed. */
         FILE *src = fopen(ima->policy_file, "r");
-        if (src) {
-            char buf[1024];
-            while (fgets(buf, sizeof(buf), src)) fputs(buf, fp);
-            fclose(src);
+        if (!src) {
+            fclose(fp);
+            EOS_ERROR("IMA policy file %s cannot be read; /etc/ima/policy "
+                      "would be empty.", ima->policy_file);
+            return -1;
         }
+        char buf[1024];
+        while (fgets(buf, sizeof(buf), src)) fputs(buf, fp);
+        fclose(src);
     } else {
         if (ima->measure_files)
             fprintf(fp, "measure func=FILE_CHECK mask=MAY_EXEC\n");
@@ -224,9 +260,20 @@ int eos_ima_install_to_rootfs(const EosIma *ima, const char *rootfs_dir) {
         char cmd[2048];
         snprintf(path, sizeof(path), "%s%setc%skeys", rootfs_dir, PATH_SEP, PATH_SEP);
         MKDIR(path);
-        snprintf(cmd, sizeof(cmd), "cp \"%s\" \"%s/ima-key.pub\" 2>/dev/null || true",
+        /* Same `|| true` + discarded result as the SELinux copy above. An
+         * appraise policy with no key installed is a rootfs that will refuse
+         * to run its own executables, and it returned 0. */
+        snprintf(cmd, sizeof(cmd), "cp \"%s\" \"%s/ima-key.pub\" 2>/dev/null",
                  ima->key_file, path);
-        system(cmd);
+        if (system(cmd) != 0) {
+            EOS_ERROR("IMA key copy failed (%s -> %s/ima-key.pub); the policy "
+                      "is installed but the key is NOT.", ima->key_file, path);
+            return -1;
+        }
+#else
+        EOS_ERROR("The IMA key cannot be installed on this platform; the "
+                  "policy is installed but the key is NOT.");
+        return -1;
 #endif
     }
     return 0;
@@ -627,10 +674,23 @@ int eos_busybox_install_to_rootfs(const EosBusybox *bb, const char *rootfs_dir) 
 #ifndef _WIN32
     char cmd[2048];
     if (bb->source_dir[0]) {
+        /* system()'s result was discarded here, so a rootfs with no busybox
+         * in it -- no source tree, no make, a failed build -- came back 0. */
         snprintf(cmd, sizeof(cmd),
                  "make -C \"%s\" install CONFIG_PREFIX=\"%s\"",
                  bb->source_dir, rootfs_dir);
-        system(cmd);
+        if (system(cmd) != 0) {
+            EOS_ERROR("busybox install failed (%s -> %s); the rootfs has no "
+                      "busybox and its /init would not run.",
+                      bb->source_dir, rootfs_dir);
+            return -1;
+        }
+    }
+#else
+    if (bb->source_dir[0]) {
+        EOS_ERROR("busybox cannot be installed on this platform; the rootfs "
+                  "would have no busybox.");
+        return -1;
     }
 #endif
 
@@ -638,15 +698,18 @@ int eos_busybox_install_to_rootfs(const EosBusybox *bb, const char *rootfs_dir) 
     char path[1024];
     snprintf(path, sizeof(path), "%s%sinit", rootfs_dir, PATH_SEP);
     FILE *fp = fopen(path, "w");
-    if (fp) {
-        fprintf(fp, "#!/bin/busybox sh\n");
-        fprintf(fp, "/bin/busybox --install -s\n");
-        fprintf(fp, "mount -t proc proc /proc\n");
-        fprintf(fp, "mount -t sysfs sysfs /sys\n");
-        fprintf(fp, "mount -t devtmpfs devtmpfs /dev\n");
-        fprintf(fp, "exec /sbin/init\n");
-        fclose(fp);
+    /* An unwritable /init is an initramfs that cannot boot; it was silent. */
+    if (!fp) {
+        EOS_ERROR("cannot write %s; the initramfs has no /init.", path);
+        return -1;
     }
+    fprintf(fp, "#!/bin/busybox sh\n");
+    fprintf(fp, "/bin/busybox --install -s\n");
+    fprintf(fp, "mount -t proc proc /proc\n");
+    fprintf(fp, "mount -t sysfs sysfs /sys\n");
+    fprintf(fp, "mount -t devtmpfs devtmpfs /dev\n");
+    fprintf(fp, "exec /sbin/init\n");
+    fclose(fp);
     return 0;
 }
 
