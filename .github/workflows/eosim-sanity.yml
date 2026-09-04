@@ -71,7 +71,12 @@ jobs:
   # failing the day EoSim publishes something, which is when it should be
   # deleted and the installs pointed at the artifact.
   published-artifact-watch:
-    name: EoSim publishes no installable artifact (tracking)
+    name: EoSim artifact publication (informational)
+    # Neither branch of this job can fail -- it is a notice, not a check --
+    # so it sits outside sanity-gate's needs and runs only on the schedule
+    # and on manual dispatch: a permanently-green status named for a
+    # deficiency on every pull request helps nobody.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - name: Look for a wheel or sdist on any release
@@ -110,26 +115,11 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      - name: Install EoSim from source
-        # shell: bash -- this job also runs on windows-latest, where the
-        # runner default is pwsh. `VAR=$(...)`, `cp -r` and a leading `#`
-        # comment are all invalid there, which is how the first real run
-        # of this workflow failed on all three Windows legs while ubuntu
-        # and macOS passed.
-        shell: bash
-        run: |
-          git clone --filter=blob:none https://github.com/embeddedos-org/EoSim.git "${{ runner.temp }}/EoSim"
-          git -C "${{ runner.temp }}/EoSim" checkout --detach ${{ env.EOSIM_COMMIT }}
-          pip install "${{ runner.temp }}/EoSim"
-          # platforms/ is data, not package data: eosim/cli/main.py sets
-          # PLATFORMS_DIR to <site-packages>/platforms, while the package
-          # ships only eosim/platforms/__init__.py. Without this copy every
-          # `eosim run` fails with
-          #   FileNotFoundError: .../site-packages/platforms
-          # which is what the first real run of this workflow showed -- the
-          # missing v0.1.0 tag was the first blocker, not the only one.
-          SITE_PACKAGES=$(python -c "import eosim, os; print(os.path.dirname(os.path.dirname(eosim.__file__)))")
-          cp -r "${{ runner.temp }}/EoSim/platforms" "$SITE_PACKAGES/"
+      - name: Install EoSim (pinned)
+        uses: ./.github/actions/install-eosim
+        with:
+          commit: ${{ env.EOSIM_COMMIT }}
+          expected-dist: ${{ env.EOSIM_EXPECTED_DIST }}
       - name: Verify installation
         # shell: bash -- this job also runs on windows-latest, where the
         # runner default is pwsh. `VAR=$(...)`, `cp -r` and a leading `#`
@@ -139,17 +129,7 @@ jobs:
         shell: bash
         run: |
           eosim --version
-          # `eosim --version` is a hardcoded literal in EoSim
-          # (eosim/cli/main.py:49) and prints 2.0.0 from every tag, so it
-          # cannot tell a right install from a wrong one. Assert what pip
-          # actually resolved instead -- dist metadata is the only version the
-          # commit pin controls.
-          python -c "
-          import importlib.metadata as m, os, sys
-          got = m.version('eosim'); want = os.environ['EOSIM_EXPECTED_DIST']
-          print(f'eosim dist version: {got}')
-          sys.exit(0 if got == want else f'expected {want}, got {got}')
-          "
+          # dist-version assert lives in the install-eosim composite action
           eosim list
       - name: Validate all platform configs
         # shell: bash -- this job also runs on windows-latest, where the
@@ -180,26 +160,11 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install EoSim from source
-        # shell: bash -- this job also runs on windows-latest, where the
-        # runner default is pwsh. `VAR=$(...)`, `cp -r` and a leading `#`
-        # comment are all invalid there, which is how the first real run
-        # of this workflow failed on all three Windows legs while ubuntu
-        # and macOS passed.
-        shell: bash
-        run: |
-          git clone --filter=blob:none https://github.com/embeddedos-org/EoSim.git "${{ runner.temp }}/EoSim"
-          git -C "${{ runner.temp }}/EoSim" checkout --detach ${{ env.EOSIM_COMMIT }}
-          pip install "${{ runner.temp }}/EoSim"
-          # platforms/ is data, not package data: eosim/cli/main.py sets
-          # PLATFORMS_DIR to <site-packages>/platforms, while the package
-          # ships only eosim/platforms/__init__.py. Without this copy every
-          # `eosim run` fails with
-          #   FileNotFoundError: .../site-packages/platforms
-          # which is what the first real run of this workflow showed -- the
-          # missing v0.1.0 tag was the first blocker, not the only one.
-          SITE_PACKAGES=$(python -c "import eosim, os; print(os.path.dirname(os.path.dirname(eosim.__file__)))")
-          cp -r "${{ runner.temp }}/EoSim/platforms" "$SITE_PACKAGES/"
+      - name: Install EoSim (pinned)
+        uses: ./.github/actions/install-eosim
+        with:
+          commit: ${{ env.EOSIM_COMMIT }}
+          expected-dist: ${{ env.EOSIM_EXPECTED_DIST }}
       - name: Simulate ${{ matrix.platform }}
         run: |
           eosim run ${{ matrix.platform }} --headless --timeout 10
@@ -224,26 +189,11 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install EoSim from source
-        # shell: bash -- this job also runs on windows-latest, where the
-        # runner default is pwsh. `VAR=$(...)`, `cp -r` and a leading `#`
-        # comment are all invalid there, which is how the first real run
-        # of this workflow failed on all three Windows legs while ubuntu
-        # and macOS passed.
-        shell: bash
-        run: |
-          git clone --filter=blob:none https://github.com/embeddedos-org/EoSim.git "${{ runner.temp }}/EoSim"
-          git -C "${{ runner.temp }}/EoSim" checkout --detach ${{ env.EOSIM_COMMIT }}
-          pip install "${{ runner.temp }}/EoSim"
-          # platforms/ is data, not package data: eosim/cli/main.py sets
-          # PLATFORMS_DIR to <site-packages>/platforms, while the package
-          # ships only eosim/platforms/__init__.py. Without this copy every
-          # `eosim run` fails with
-          #   FileNotFoundError: .../site-packages/platforms
-          # which is what the first real run of this workflow showed -- the
-          # missing v0.1.0 tag was the first blocker, not the only one.
-          SITE_PACKAGES=$(python -c "import eosim, os; print(os.path.dirname(os.path.dirname(eosim.__file__)))")
-          cp -r "${{ runner.temp }}/EoSim/platforms" "$SITE_PACKAGES/"
+      - name: Install EoSim (pinned)
+        uses: ./.github/actions/install-eosim
+        with:
+          commit: ${{ env.EOSIM_COMMIT }}
+          expected-dist: ${{ env.EOSIM_EXPECTED_DIST }}
       - name: Boot guest and test EoSim inside
         run: |
           echo "=== Nested Guest: ${{ matrix.guest }} ==="
@@ -259,6 +209,11 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: Install EoSim (pinned)
+        uses: ./.github/actions/install-eosim
+        with:
+          commit: ${{ env.EOSIM_COMMIT }}
+          expected-dist: ${{ env.EOSIM_EXPECTED_DIST }}
       - name: Test EoSim on Windows
         # shell: bash -- this job also runs on windows-latest, where the
         # runner default is pwsh. `VAR=$(...)`, `cp -r` and a leading `#`
@@ -270,9 +225,6 @@ jobs:
           # No EoSim release ships a wheel, so this URL 404s. The other jobs
           # in this workflow already install from a clone; these two were
           # missed.
-          git clone --filter=blob:none https://github.com/embeddedos-org/EoSim.git "${{ runner.temp }}/EoSim"
-          git -C "${{ runner.temp }}/EoSim" checkout --detach ${{ env.EOSIM_COMMIT }}
-          pip install "${{ runner.temp }}/EoSim"
           # platforms/ is data, not package data: eosim/cli/main.py sets
           # PLATFORMS_DIR to <site-packages>/platforms, while the package
           # ships only eosim/platforms/__init__.py. Without this copy every
@@ -280,20 +232,8 @@ jobs:
           #   FileNotFoundError: .../site-packages/platforms
           # which is what the first real run of this workflow showed -- the
           # missing v0.1.0 tag was the first blocker, not the only one.
-          SITE_PACKAGES=$(python -c "import eosim, os; print(os.path.dirname(os.path.dirname(eosim.__file__)))")
-          cp -r "${{ runner.temp }}/EoSim/platforms" "$SITE_PACKAGES/"
           eosim --version
-          # `eosim --version` is a hardcoded literal in EoSim
-          # (eosim/cli/main.py:49) and prints 2.0.0 from every tag, so it
-          # cannot tell a right install from a wrong one. Assert what pip
-          # actually resolved instead -- dist metadata is the only version the
-          # commit pin controls.
-          python -c "
-          import importlib.metadata as m, os, sys
-          got = m.version('eosim'); want = os.environ['EOSIM_EXPECTED_DIST']
-          print(f'eosim dist version: {got}')
-          sys.exit(0 if got == want else f'expected {want}, got {got}')
-          "
+          # dist-version assert lives in the install-eosim composite action
           eosim list && eosim doctor
           eosim list
 
@@ -306,14 +246,16 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: Install EoSim (pinned)
+        uses: ./.github/actions/install-eosim
+        with:
+          commit: ${{ env.EOSIM_COMMIT }}
+          expected-dist: ${{ env.EOSIM_EXPECTED_DIST }}
       - name: Test EoSim on macOS
         run: |
           # No EoSim release ships a wheel, so this URL 404s. The other jobs
           # in this workflow already install from a clone; these two were
           # missed.
-          git clone --filter=blob:none https://github.com/embeddedos-org/EoSim.git "${{ runner.temp }}/EoSim"
-          git -C "${{ runner.temp }}/EoSim" checkout --detach ${{ env.EOSIM_COMMIT }}
-          pip install "${{ runner.temp }}/EoSim"
           # platforms/ is data, not package data: eosim/cli/main.py sets
           # PLATFORMS_DIR to <site-packages>/platforms, while the package
           # ships only eosim/platforms/__init__.py. Without this copy every
@@ -321,27 +263,15 @@ jobs:
           #   FileNotFoundError: .../site-packages/platforms
           # which is what the first real run of this workflow showed -- the
           # missing v0.1.0 tag was the first blocker, not the only one.
-          SITE_PACKAGES=$(python -c "import eosim, os; print(os.path.dirname(os.path.dirname(eosim.__file__)))")
-          cp -r "${{ runner.temp }}/EoSim/platforms" "$SITE_PACKAGES/"
           eosim --version
-          # `eosim --version` is a hardcoded literal in EoSim
-          # (eosim/cli/main.py:49) and prints 2.0.0 from every tag, so it
-          # cannot tell a right install from a wrong one. Assert what pip
-          # actually resolved instead -- dist metadata is the only version the
-          # commit pin controls.
-          python -c "
-          import importlib.metadata as m, os, sys
-          got = m.version('eosim'); want = os.environ['EOSIM_EXPECTED_DIST']
-          print(f'eosim dist version: {got}')
-          sys.exit(0 if got == want else f'expected {want}, got {got}')
-          "
+          # dist-version assert lives in the install-eosim composite action
           eosim list && eosim doctor
           eosim list
 
   sanity-gate:
     name: EoSim Sanity Gate
     if: always()
-    needs: [published-artifact-watch, install-validate, nested-simulation,
+    needs: [install-validate, nested-simulation,
             nested-guest-install, windows-sanity, macos-sanity]
     runs-on: ubuntu-latest
     steps:
@@ -356,6 +286,17 @@ jobs:
         env:
           RESULTS: ${{ toJSON(needs) }}
         run: |
+          set -euo pipefail
+          # Refuse to conclude anything from nothing. An empty or null
+          # RESULTS previously printed "all succeeded" and exited 0 here,
+          # where eos#121's extracted ci-gate-check.sh refuses -- measured
+          # side by side. Once #121's script is on master this body should
+          # become a call to it; until then the guards are replicated inline
+          # so the two cannot disagree on the inputs that matter.
+          if [ -z "${RESULTS:-}" ] || [ "$RESULTS" = "null" ]; then
+            echo "::error::gate received no results to check"
+            exit 1
+          fi
           printf '%s\n' "$RESULTS"
           bad=$(printf '%s' "$RESULTS" | jq -r '
             to_entries[]
