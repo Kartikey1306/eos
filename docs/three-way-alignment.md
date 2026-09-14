@@ -301,6 +301,8 @@ cd ebuild && python test_full_pipeline.py            # test_full_pipeline.py doe
 
 ## Build System Alignment
 
+> Kept from the original audit; the counts in this table are the original audit's, and the status table at the top supersedes them. On 2026-09-15 eboot's `CMakeLists.txt` has 84 `EBLDR_BOARD STREQUAL "<board>"` branches, not 25, and eos's `EOS_PRODUCT` is a free-form cache string whose accepted values are listed in its help text, not enumerated in CMake.
+
 ### CMake Variables Cross-Reference
 
 | Variable | eos `CMakeLists.txt` | eboot `CMakeLists.txt` | ebuild CLI |
