@@ -19,6 +19,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 #include <errno.h>
 
 static int failures;
@@ -779,6 +780,57 @@ static void test_busybox_install_refuses_null_arguments(void) {
     PASS_IF_CLEAN(f0, "busybox_install_to_rootfs refuses NULL arguments");
 }
 
+/* The change above only matters if REQUIRE_TMPDIR really does fail rather
+ * than skip, so this proves it on a mkdtemp() that cannot succeed. The
+ * template's parent does not exist, which fails with ENOENT for any user --
+ * a read-only directory would not do, because root writes there anyway and
+ * CI may run as root. The probe runs in a child so its recorded failure
+ * cannot leak into this process's count, and its stderr is captured so the
+ * assertion is on the message class: [FAIL], and not the old [SKIP]. */
+static void require_tmpdir_probe(void) {
+    char tmpl[] = "/nonexistent-eos-parent-3f9c1a/eos_XXXXXX";
+    REQUIRE_TMPDIR(tmpl);
+    /* Not reached: the macro must have returned above. */
+    fprintf(stderr, "[FAIL] REQUIRE_TMPDIR continued past a failed mkdtemp\n");
+    failures++;
+}
+
+static void test_require_tmpdir_fails_rather_than_skips(void) {
+    int before = failures;
+    int fds[2];
+    char out[512];
+    ssize_t n, total = 0;
+    int status = 0;
+    pid_t pid;
+
+    if (pipe(fds) != 0) { FIXTURE_FAILED("pipe"); return; }
+    pid = fork();
+    if (pid < 0) { FIXTURE_FAILED("fork"); close(fds[0]); close(fds[1]); return; }
+    if (pid == 0) {
+        int f0 = failures;
+        close(fds[0]);
+        dup2(fds[1], 2);
+        close(fds[1]);
+        require_tmpdir_probe();
+        /* exactly one failure recorded, and the probe stopped at the macro */
+        _exit(failures == f0 + 1 ? 0 : 1);
+    }
+    close(fds[1]);
+    while (total < (ssize_t)sizeof out - 1 &&
+           (n = read(fds[0], out + total, sizeof out - 1 - (size_t)total)) > 0)
+        total += n;
+    out[total] = '\0';
+    close(fds[0]);
+    waitpid(pid, &status, 0);
+
+    CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+    CHECK(strstr(out, "[FAIL]") != NULL);
+    CHECK(strstr(out, "mkdtemp(tmpl)") != NULL);
+    CHECK(strstr(out, "[SKIP]") == NULL);
+    PASS_IF_CLEAN(before, "REQUIRE_TMPDIR counts a failed mkdtemp as a failure, "
+                          "reports it as [FAIL], and stops the test");
+}
+
 int main(void) {
     test_dmverity_verify_refuses_hostile_paths();
     test_dmverity_verify_refuses_hostile_hash_device();
@@ -798,6 +850,7 @@ int main(void) {
     test_busybox_install_reports_an_init_it_could_not_write();
     test_busybox_install_refuses_null_arguments();
     test_ordinary_paths_still_reach_the_shell();
+    test_require_tmpdir_fails_rather_than_skips();
 
     if (failures) {
         fprintf(stderr, "\n%d check(s) failed\n", failures);
