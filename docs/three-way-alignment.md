@@ -341,6 +341,8 @@ python3 sign_image.py --key key.pem --input ../../eos/build/app.bin --output sig
 
 ### eboot CMakeLists.txt Board Coverage (25/25)
 
+> Kept from the original audit as a 25-board subset; the full eBoot inventory is 83 board directories (status table above), and 27 of them are never targeted by `MCU_TO_EBOOT_BOARD`. The 25/25 below is true of these 25 rows only.
+
 | Board | In `if/elseif` chain | In FATAL_ERROR help string |
 |-------|---------------------|---------------------------|
 | stm32f4 | ✅ | ✅ |
@@ -383,8 +385,8 @@ python3 sign_image.py --key key.pem --input ../../eos/build/app.bin --output sig
 | `eos/README.md` | ✅ full API, profiles | ✅ related project link | ✅ related project link |
 | `eboot/README.md` | ✅ related project link | ✅ full boot API | ✅ related project link |
 | `ebuild/README.md` | ✅ builds eos | ✅ builds eboot | ✅ full CLI reference |
-| `docs/hardware-alignment.md` | ✅ 25 board YAMLs | ✅ 25 board ports | ✅ MCU maps |
-| `docs/three-way-alignment.md` | ✅ profiles, boards | ✅ boards, platform enum | ✅ all maps audited |
+| `docs/hardware-alignment.md` | ⚠️ 25 of 84 board YAMLs | ⚠️ 25 of 83 board ports | ✅ MCU maps |
+| `docs/three-way-alignment.md` | ⚠️ measured 2026-09-14; see the status table | ⚠️ measured 2026-09-14; see the status table | ⚠️ measured 2026-09-14; see the status table |
 | `docs/adding-hardware.md` | ✅ HAL backends, profiles | ✅ EBOOT_REGISTER_BOARD | ✅ — |
 | `docs/api-release-process.md` | ✅ Doxyfile, headers | ✅ Doxyfile, headers | ✅ CLI versioning |
 | `eos/docs/api-reference.md` | ✅ all modules | — | — |

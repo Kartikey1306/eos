@@ -50,6 +50,8 @@ Legacy/Niche:
 
 **Result: 25/25 boards aligned.** Every eboot board has a matching eos board definition, and every eos board has a matching eboot port.
 
+> Superseded: measured 2026-09-14, the full inventories are 84 eos board YAMLs against 83 eBoot board directories, and only 7 names match across them; the 25 rows above are the subset the original audit chose, not the whole. Both halves of the sentence above are false for the full inventories. See `docs/three-way-alignment.md` for the measured status table.
+
 ---
 
 ## Detailed Board Inventory
