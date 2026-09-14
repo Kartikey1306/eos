@@ -156,6 +156,18 @@ void eos_schedule(void)
     }
 
     int next = find_next_task();
+    /*
+     * Unreachable by construction. Slot 0 is the idle task, which
+     * eos_task_delete() and eos_task_suspend() refuse, and idle_task_func()
+     * only spins or waits for an interrupt, so it never blocks: the idle
+     * task is always READY (or was RUNNING and was made READY just above),
+     * and the "best < 0 ||" term in find_next_task() lets it be chosen at
+     * priority 255 when nothing else is. The only way to reach it is the
+     * canary check above marking the idle task DELETED, which is a fault,
+     * not a schedule. Even then the early return is self-healing: g_current_sp
+     * and g_next_sp still name the outgoing task, which stays READY, and
+     * the next eos_schedule() finds it and marks it RUNNING.
+     */
     if (next < 0) return;  /* No valid task is runnable. */
 
     /*
@@ -592,5 +604,3 @@ int eos_task_get_all_stats(eos_task_stats_t *out, int max_entries, int *count)
     *count = n;
     return EOS_KERN_OK;
 }
-
-

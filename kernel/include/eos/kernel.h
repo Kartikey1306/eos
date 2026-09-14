@@ -100,7 +100,26 @@ bool eos_kernel_is_running(void);
 int eos_task_create(const char *name, eos_task_func_t entry, void *arg,
                      uint8_t priority, uint32_t stack_size);
 
+/**
+ * @brief Delete a task; its slot becomes available to eos_task_create().
+ * @param handle  Task handle (slot index) returned by eos_task_create().
+ * @return EOS_KERN_OK on success; EOS_KERN_INVALID for handle 0, an
+ *         out-of-range handle, or a slot that holds no task.
+ *
+ * Handle 0 is the idle task, and it is permanent: it is the task the
+ * scheduler falls back to when nothing else is runnable, so it can be
+ * neither deleted nor suspended.
+ */
 int  eos_task_delete(eos_task_handle_t handle);
+
+/**
+ * @brief Suspend a task until eos_task_resume() is called on it.
+ * @param handle  Task handle (slot index) returned by eos_task_create().
+ * @return EOS_KERN_OK on success; EOS_KERN_INVALID for handle 0, an
+ *         out-of-range handle, or a slot that holds no task.
+ *
+ * Handle 0 is the idle task and is permanent; see eos_task_delete().
+ */
 int  eos_task_suspend(eos_task_handle_t handle);
 int  eos_task_resume(eos_task_handle_t handle);
 void eos_task_yield(void);
