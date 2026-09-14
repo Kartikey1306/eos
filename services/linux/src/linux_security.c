@@ -670,6 +670,7 @@ int eos_busybox_build(EosBusybox *bb) {
 }
 
 int eos_busybox_install_to_rootfs(const EosBusybox *bb, const char *rootfs_dir) {
+    if (!bb || !rootfs_dir) return -1;
     if (!is_path_safe(bb->source_dir) || !is_path_safe(rootfs_dir)) return -1;
 #ifndef _WIN32
     char cmd[2048];

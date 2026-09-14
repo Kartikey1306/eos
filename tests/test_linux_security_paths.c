@@ -730,6 +730,31 @@ static void test_busybox_install_reports_an_init_it_could_not_write(void) {
     PASS_IF_CLEAN(f0, "busybox_install_to_rootfs reports an /init it could not write");
 }
 
+/* is_path_safe() refuses NULL, but eos_busybox_install_to_rootfs() read
+ * bb->source_dir to hand it to the predicate, so a NULL bb was a crash
+ * rather than a -1. Both arguments are now refused before either is
+ * dereferenced -- and, as everywhere in this file, refused means nothing
+ * was written: the rootfs gets no /init. */
+static void test_busybox_install_refuses_null_arguments(void) {
+    int f0 = failures;
+    char rootfs[] = "/tmp/eos_lsp_null_XXXXXX";
+    char init[128];
+    EosBusybox bb;
+
+    if (!mkdtemp(rootfs)) { fprintf(stderr, "[SKIP] mkdtemp failed\n"); return; }
+    snprintf(init, sizeof init, "%s/init", rootfs);
+
+    CHECK(eos_busybox_install_to_rootfs(NULL, rootfs) == -1);
+    CHECK(access(init, F_OK) != 0);
+
+    eos_busybox_init(&bb);
+    CHECK(eos_busybox_install_to_rootfs(&bb, NULL) == -1);
+
+    remove(init);
+    rmdir(rootfs);
+    PASS_IF_CLEAN(f0, "busybox_install_to_rootfs refuses NULL arguments");
+}
+
 int main(void) {
     test_dmverity_verify_refuses_hostile_paths();
     test_dmverity_verify_refuses_hostile_hash_device();
@@ -747,6 +772,7 @@ int main(void) {
     test_selinux_install_reports_a_policy_it_did_not_copy();
     test_selinux_install_guard_stops_a_reachable_injection();
     test_busybox_install_reports_an_init_it_could_not_write();
+    test_busybox_install_refuses_null_arguments();
     test_ordinary_paths_still_reach_the_shell();
 
     if (failures) {
