@@ -118,6 +118,53 @@ static int eos_rmdir_recursive(const char *path)
  * is the same opt-in, for tests and for bring-up.
  * -------------------------------------------------------------------------- */
 
+/* --------------------------------------------------------------------------
+ * Header fields that become paths
+ *
+ * hdr.package_id names the install directory under apps_dir and hdr.name
+ * names the binary inside it. Both come straight from the package file, and
+ * the signature covers the binary alone, so both are attacker-chosen even
+ * for a genuinely signed package: "../../.." in package_id put a 0755 binary
+ * outside apps_dir, and a 64-byte field with no terminator was printed and
+ * joined into paths past the end of the struct. install_path is later handed
+ * to `rm -rf "..."` through system(), so a quote in package_id reached a
+ * shell as well.
+ *
+ * Each field is a single path component: terminated, non-empty, made of
+ * [A-Za-z0-9._-] only, and not "." or "..". Nothing else is a name.
+ * -------------------------------------------------------------------------- */
+static bool eos_pkg_field_is_component(const char *field, size_t field_sz)
+{
+    size_t n = 0;
+    while (n < field_sz && field[n] != '\0') n++;
+    if (n == 0 || n == field_sz) return false;            /* empty, or unterminated */
+    if (field[0] == '.' && (n == 1 || (n == 2 && field[1] == '.'))) return false;
+    for (size_t i = 0; i < n; i++) {
+        unsigned char c = (unsigned char)field[i];
+        bool ok = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') ||
+                  (c >= 'A' && c <= 'Z') || c == '.' || c == '_' || c == '-';
+        if (!ok) return false;
+    }
+    return true;
+}
+
+/* Refuse a header whose name or package_id is not a usable path component.
+ * Called before either field is printed, looked up, or joined into a path. */
+static int eos_pkg_check_header_names(const eapp_header_t *hdr)
+{
+    if (!eos_pkg_field_is_component(hdr->package_id, sizeof(hdr->package_id))) {
+        fprintf(stderr, "eos-pkg: package_id is not a valid name "
+                        "(one path component of [A-Za-z0-9._-], terminated)\n");
+        return -1;
+    }
+    if (!eos_pkg_field_is_component(hdr->name, sizeof(hdr->name))) {
+        fprintf(stderr, "eos-pkg: name is not a valid name "
+                        "(one path component of [A-Za-z0-9._-], terminated)\n");
+        return -1;
+    }
+    return 0;
+}
+
 static uint8_t  eos_pkg_anchor[EAPP_PUBKEY_LEN];
 static bool     eos_pkg_anchor_set = false;
 
@@ -523,6 +570,14 @@ int eos_pkg_verify(const char *eapp_path)
         return -1;
     }
 
+    /* After the signature, so an unsigned package is reported as unsigned.
+     * Before anything prints or joins the fields. */
+    if (eos_pkg_check_header_names(&hdr) != 0) {
+        free(binary_data);
+        fclose(f);
+        return -1;
+    }
+
     free(binary_data);
     fclose(f);
 
@@ -630,6 +685,15 @@ int eos_pkg_install(eapp_db_t *db, const char *eapp_path)
     }
 
     if (eos_pkg_check_signature(hdr.signature, binary_data, hdr.binary_size) != 0) {
+        free(binary_data);
+        fclose(f);
+        return -1;
+    }
+
+    /* The two fields that become the install path. Checked after the
+     * signature so an unsigned package fails as unsigned, and before the
+     * first snprintf that would read them. */
+    if (eos_pkg_check_header_names(&hdr) != 0) {
         free(binary_data);
         fclose(f);
         return -1;
@@ -793,15 +857,18 @@ int eos_pkg_update(eapp_db_t *db, const char *eapp_path)
     }
     fclose(f);
 
+    /* Verify before the lookup: eos_pkg_verify() checks the signature and
+     * then the name fields, so nothing below prints or compares a
+     * package_id the package was not entitled to carry. */
+    if (eos_pkg_verify(eapp_path) != 0) {
+        fprintf(stderr, "eos-pkg: new package failed verification — update aborted\n");
+        return -1;
+    }
+
     eapp_package_t *existing = eos_pkg_find(db, hdr.package_id);
     if (!existing) {
         fprintf(stderr, "eos-pkg: '%s' is not installed (use 'install' instead)\n",
                 hdr.package_id);
-        return -1;
-    }
-
-    if (eos_pkg_verify(eapp_path) != 0) {
-        fprintf(stderr, "eos-pkg: new package failed verification — update aborted\n");
         return -1;
     }
 
