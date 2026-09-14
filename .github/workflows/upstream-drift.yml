@@ -126,7 +126,8 @@ jobs:
             -DCMAKE_TOOLCHAIN_FILE=toolchains/aarch64-linux-gnu.cmake \
             -DEBLDR_BOARD=qemu_arm64 \
             -DEBLDR_VERIFY_STAGE1=OFF \
-            -DCMAKE_BUILD_TYPE=Release
+            -DCMAKE_BUILD_TYPE=Release \
+            -DEBLDR_ALLOW_DEV_KEY=ON
           cmake --build build_drift --parallel "$(nproc)"
 
       - name: Say what a failure here means

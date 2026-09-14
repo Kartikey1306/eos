@@ -86,6 +86,11 @@ jobs:
           mkdir -p sim_artifacts
 
       - name: Build eBoot (ARM64 qemu_arm64 board)
+        # EBLDR_ALLOW_DEV_KEY: eBoot refuses to configure a Release build of a
+        # real board without a production trust anchor (eBoot#120). This build
+        # exists to run the simulation, and nothing it produces reaches a
+        # device, so it says so. On an eBoot pin that predates the option the
+        # flag is an unused-variable warning, not an error.
         run: |
           cd eBoot
           mkdir -p build_ci
@@ -93,7 +98,8 @@ jobs:
             -DCMAKE_TOOLCHAIN_FILE=toolchains/aarch64-linux-gnu.cmake \
             -DEBLDR_BOARD=qemu_arm64 \
             -DEBLDR_VERIFY_STAGE1=OFF \
-            -DCMAKE_BUILD_TYPE=Release
+            -DCMAKE_BUILD_TYPE=Release \
+            -DEBLDR_ALLOW_DEV_KEY=ON
           cmake --build build_ci --parallel $(nproc)
           echo "eBoot artifacts:"
           find build_ci -name '*.a' -o -name '*.elf' | head -20
