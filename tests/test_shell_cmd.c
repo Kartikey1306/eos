@@ -233,13 +233,18 @@ TEST(test_install_never_runs_a_truncated_line)
 
     /* The NuttX install line names the two directories four times: over
      * 2000 bytes, which the old 1024-byte buffer cut inside a quoted path;
-     * the shell then died on the unterminated quote (EOS_ERR_BUILD). The
-     * whole line fits the 4096-byte builder, the mkdir fails, and the
-     * line's own `|| true` makes it exit 0: EOS_OK means every character of
-     * it reached the shell. EOS_ERR_INVALID would mean it was refused. */
+     * the shell then died on the unterminated quote. The whole line fits
+     * the 4096-byte builder and reaches the shell, where the mkdir fails.
+     * The POSIX line ends in `|| true`, so it exits 0; the cmd.exe line has
+     * no such tail, so it exits non-zero. Either is a line that ran whole.
+     * EOS_ERR_INVALID would mean it was refused before running. */
     EosBackend b;
     eos_backend_nuttx_init(&b);
+#ifdef _WIN32
+    ASSERT(b.install(&b, longdir, longdir) == EOS_ERR_BUILD);
+#else
     ASSERT(b.install(&b, longdir, longdir) == EOS_OK);
+#endif
 
     /* And the builder refuses when even one more argument would not fit. */
     EosShellCmd cmd;
