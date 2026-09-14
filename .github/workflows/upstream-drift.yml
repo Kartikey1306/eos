@@ -122,6 +122,10 @@ jobs:
           # The same configuration eos-simulation.yml builds the pin with, so
           # a pass here means the pin can be bumped to this master.
           cd eBoot
+          # EBLDR_ALLOW_DEV_KEY: this job builds eBoot master to see whether it
+          # still builds; nothing it produces reaches a device. Never use this
+          # flag in a workflow that publishes an artifact -- it is the opt-out
+          # from eBoot's refusal to build a real board on the RFC 8032 test key.
           cmake -B build_drift -S . \
             -DCMAKE_TOOLCHAIN_FILE=toolchains/aarch64-linux-gnu.cmake \
             -DEBLDR_BOARD=qemu_arm64 \
