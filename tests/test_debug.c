@@ -177,6 +177,88 @@ static void test_gdb_query_roundtrip(void) {
     printf("[PASS] gdb qSupported round-trip\n");
 }
 
+/* The stub advertises PacketSize in its qSupported reply, and GDB sends
+ * packets up to that size. A packet the stub cannot hold must not desync
+ * the stream: it is answered with '-' and the next packet still parses.
+ * And a packet exactly as long as advertised must be accepted. */
+static unsigned advertised_packet_size(void) {
+    gdb_reset();
+    gdb_push("qSupported");
+    gdb_push("D");
+    gdb_run();
+    const char *p = strstr(gdb_tx, "PacketSize=");
+    assert(p != NULL);
+    unsigned size = 0;
+    assert(sscanf(p + strlen("PacketSize="), "%x", &size) == 1);
+    return size;
+}
+
+/* The first thing the stub writes is the stop reply "$S05#xx"; the byte
+ * after it is the ack ('+' or '-') for the first scripted packet. */
+static char first_ack(void) {
+    const char *hash = strchr(gdb_tx, '#');
+    assert(hash != NULL && strlen(hash) >= 4);
+    return hash[3];
+}
+
+static void test_gdb_packet_of_the_advertised_size_is_accepted(void) {
+    unsigned size = advertised_packet_size();
+    assert(size >= 64 && size < GDB_RX_CAP - 8);
+
+    char body[GDB_RX_CAP];
+    memset(body, 'x', size);
+    body[0] = 'q';                /* an unknown query: the reply is empty */
+    body[size] = '\0';
+
+    gdb_reset();
+    gdb_push(body);
+    gdb_push("D");
+    gdb_run();
+    /* '+' acknowledges the long packet, "$#00" is the empty reply to an
+     * unknown query, and D is then handled normally. */
+    assert(first_ack() == '+');
+    assert(tx_has("$#00"));
+    assert(tx_has("$OK#"));
+    printf("[PASS] gdb packet of the advertised size is accepted\n");
+}
+
+static void test_gdb_packet_longer_than_advertised_does_not_desync(void) {
+    unsigned size = advertised_packet_size();
+
+    char body[GDB_RX_CAP];
+    memset(body, 'x', size + 40);
+    body[0] = 'q';
+    body[size + 40] = '\0';
+
+    gdb_reset();
+    gdb_push(body);
+    gdb_push("D");
+    gdb_run();
+    /* The oversized packet is refused with '-', nothing of it is answered,
+     * and the D that follows still gets its OK: the stream stayed in sync. */
+    assert(first_ack() == '-');
+    assert(!tx_has("$#00"));
+    assert(tx_has("$OK#"));
+    printf("[PASS] gdb packet longer than advertised does not desync\n");
+}
+
+/* A packet whose checksum does not match is answered with '-', and GDB
+ * resends it. The session must still be there to receive the resend: it
+ * used to end on the first corrupt packet, because the dispatch loop read
+ * every negative result from recv_packet() as a dead transport. */
+static void test_gdb_corrupt_checksum_is_nacked_and_the_session_continues(void) {
+    gdb_reset();
+    const char *bad = "$qAttached#00";       /* real checksum is not 00 */
+    memcpy(gdb_rx, bad, strlen(bad));
+    gdb_rx_len = strlen(bad);
+    gdb_push("D");
+    gdb_run();
+    assert(first_ack() == '-');
+    assert(!tx_has("$1#"));                  /* the refused query got no reply */
+    assert(tx_has("$OK#"));                  /* D still handled */
+    printf("[PASS] gdb corrupt checksum is NACKed and the session continues\n");
+}
+
 static void test_coredump_init(void) {
     assert(eos_coredump_init(EOS_DUMP_TARGET_RAM) == 0);
     assert(!eos_coredump_exists());
@@ -233,6 +315,9 @@ int main(void) {
     test_gdb_write_mem_non_hex_payload();
     test_gdb_write_mem_oversized_len();
     test_gdb_query_roundtrip();
+    test_gdb_packet_of_the_advertised_size_is_accepted();
+    test_gdb_packet_longer_than_advertised_does_not_desync();
+    test_gdb_corrupt_checksum_is_nacked_and_the_session_continues();
     test_coredump_init();
     test_coredump_capture();
     test_coredump_clear();

@@ -49,30 +49,47 @@ static int send_packet(EosGdbStub *stub, const char *data) {
     return stub->io.write(stub->io.ctx, (const uint8_t *)pkt, n);
 }
 
+/* The largest packet body the stub accepts. It is what qSupported reports
+ * as PacketSize, and it is derived from the receive buffer so the two cannot
+ * drift apart: the stub used to advertise 0x400 over a 512-byte buffer, so a
+ * packet GDB was told it could send was refused every time. */
+#define GDB_PKT_BUF   512
+#define GDB_PKT_MAX   (GDB_PKT_BUF - 1)
+
+/* recv_packet() results below zero: */
+#define GDB_RECV_TRANSPORT_GONE  (-1)   /* read failed: the session is over */
+#define GDB_RECV_BAD_PACKET      (-2)   /* checksum or size: '-' was sent, GDB will resend */
+
 static int recv_packet(EosGdbStub *stub, char *buf, int maxlen) {
-    if (!stub->io.read) return -1;
+    if (!stub->io.read) return GDB_RECV_TRANSPORT_GONE;
     uint8_t c;
     do {
-        if (stub->io.read(stub->io.ctx, &c, 1) != 1) return -1;
+        if (stub->io.read(stub->io.ctx, &c, 1) != 1) return GDB_RECV_TRANSPORT_GONE;
     } while (c != '$');
 
-    int i = 0;
-    while (i < maxlen - 1) {
-        if (stub->io.read(stub->io.ctx, &c, 1) != 1) return -1;
+    /* Read the body up to '#'. A body the buffer cannot hold is drained to
+     * its '#' and refused with '-', so the checksum and the next packet are
+     * read from where they really are. Stopping early and treating the next
+     * two body bytes as the checksum left the stream out of step. */
+    int i = 0, overflow = 0;
+    for (;;) {
+        if (stub->io.read(stub->io.ctx, &c, 1) != 1) return GDB_RECV_TRANSPORT_GONE;
         if (c == '#') break;
-        buf[i++] = (char)c;
+        if (i < maxlen - 1) buf[i++] = (char)c;
+        else overflow = 1;
     }
     buf[i] = '\0';
 
     uint8_t cs_chars[2];
-    if (stub->io.read(stub->io.ctx, cs_chars, 2) != 2) return -1;
+    if (stub->io.read(stub->io.ctx, cs_chars, 2) != 2) return GDB_RECV_TRANSPORT_GONE;
     uint8_t expected = (hex_val((char)cs_chars[0]) << 4) | hex_val((char)cs_chars[1]);
     uint8_t actual = checksum(buf, i);
+    int ok = !overflow && actual == expected;
 
-    uint8_t ack = (actual == expected) ? '+' : '-';
+    uint8_t ack = ok ? '+' : '-';
     if (stub->io.write) stub->io.write(stub->io.ctx, &ack, 1);
 
-    return (actual == expected) ? i : -1;
+    return ok ? i : GDB_RECV_BAD_PACKET;
 }
 
 static void hex_encode(char *dst, const uint8_t *src, int len) {
@@ -91,7 +108,10 @@ static void handle_read_regs(EosGdbStub *stub) {
 
 static void handle_query(EosGdbStub *stub, const char *pkt) {
     if (strncmp(pkt, "qSupported", 10) == 0) {
-        send_packet(stub, "PacketSize=400;swbreak+;hwbreak+");
+        char supported[64];
+        snprintf(supported, sizeof(supported), "PacketSize=%x;swbreak+;hwbreak+",
+                 (unsigned)GDB_PKT_MAX);
+        send_packet(stub, supported);
     } else if (strcmp(pkt, "qAttached") == 0) {
         send_packet(stub, "1");
     } else if (strcmp(pkt, "qTStatus") == 0) {
@@ -213,10 +233,14 @@ void eos_gdb_handle_exception(EosGdbStub *stub, int signal) {
     snprintf(reply, sizeof(reply), "S%02x", signal & 0xFF);
     send_packet(stub, reply);
 
-    char pkt[512];
+    char pkt[GDB_PKT_BUF];
     while (stub->connected) {
         int n = recv_packet(stub, pkt, sizeof(pkt));
-        if (n < 0) break;
+        if (n == GDB_RECV_TRANSPORT_GONE) break;
+        /* A refused packet has been answered with '-'; GDB resends it. The
+         * session used to end here instead, on the first corrupt or
+         * oversized packet. */
+        if (n < 0) continue;
         if (n == 0) continue;
 
         switch (pkt[0]) {
