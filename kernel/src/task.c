@@ -164,9 +164,11 @@ void eos_schedule(void)
      * and the "best < 0 ||" term in find_next_task() lets it be chosen at
      * priority 255 when nothing else is. The only way to reach it is the
      * canary check above marking the idle task DELETED, which is a fault,
-     * not a schedule. Even then the early return is self-healing: g_current_sp
-     * and g_next_sp still name the outgoing task, which stays READY, and
-     * the next eos_schedule() finds it and marks it RUNNING.
+     * not a schedule. find_next_task() scans every slot including the
+     * outgoing one, so next < 0 means nothing at all is READY; the return
+     * leaves g_current_sp and g_next_sp naming the outgoing task and its
+     * state as the canary check left it. Nothing here recovers from that,
+     * and nothing should: an overflowed idle stack is a fault handler's job.
      */
     if (next < 0) return;  /* No valid task is runnable. */
 

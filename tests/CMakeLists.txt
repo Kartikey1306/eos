@@ -356,8 +356,9 @@ add_test(NAME test_stress COMMAND test_stress)
 # test_cmake_test_registration.py named them.
 # POSIX only: the suite proves refused inputs never reach a shell by probing
 # with access()/open(O_CREAT)/rmdir, and the MSVC leg (#132) has no unistd.h.
-# On Windows the library's own #else arm refuses every install/build call
-# before is_path_safe() matters.
+# On Windows the shell-building bodies are compiled out (#ifndef _WIN32), so
+# a path that passes is_path_safe() still reaches no shell there; the
+# predicate itself is portable and is exercised by the POSIX legs.
 if(UNIX)
     add_executable(test_linux_security_paths test_linux_security_paths.c)
     target_link_libraries(test_linux_security_paths PRIVATE eos_linux_security)

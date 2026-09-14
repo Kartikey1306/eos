@@ -116,7 +116,8 @@ int  eos_task_delete(eos_task_handle_t handle);
  * @brief Suspend a task until eos_task_resume() is called on it.
  * @param handle  Task handle (slot index) returned by eos_task_create().
  * @return EOS_KERN_OK on success; EOS_KERN_INVALID for handle 0, an
- *         out-of-range handle, or a slot that holds no task.
+ *         out-of-range handle, or a slot whose entry is NULL (never
+ *         created, or deleted through eos_task_delete()).
  *
  * Handle 0 is the idle task and is permanent; see eos_task_delete().
  */
