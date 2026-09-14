@@ -185,6 +185,11 @@ target_include_directories(test_hal_stm32f4 PRIVATE
 target_link_libraries(test_hal_stm32f4 PRIVATE eos_hal)
 add_test(NAME test_hal_stm32f4 COMMAND test_hal_stm32f4)
 
+# --- test_shell_cmd: the checked command builder, and every backend through it ---
+add_executable(test_shell_cmd test_shell_cmd.c)
+target_link_libraries(test_shell_cmd PRIVATE eos_backends eos_core)
+add_test(NAME test_shell_cmd COMMAND test_shell_cmd)
+
 # --- test_firmware: firmware build graph over the backend registry ---
 # Could not link while backends/ was outside the build: eos_systems
 # calls eos_backend_find() and nothing defined it. eos_backends is not

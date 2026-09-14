@@ -4,6 +4,7 @@
 
 #include "eos/linux_security.h"
 #include "eos/log.h"
+#include "eos/shell_cmd.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -45,57 +46,17 @@ int eos_selinux_set_policy(EosSelinux *se, const char *policy_dir,
     return -1;
 }
 
-/* Reject anything a shell reads as syntax rather than as text.
- *
- * The previous list -- ;|&><$()\"' -- missed two that matter. A backtick is
- * command substitution in every POSIX shell, so /tmp/`id` passed as safe and
- * ran id. A newline ends one command and starts another, so a path could
- * append a whole second command. Both were reported SAFE. Control characters
- * and backslash are rejected for the same reason.
- *
- * A NULL path returned 1 -- "safe" -- which is the wrong default for a
- * predicate guarding command construction. It returns 0 now; every caller
- * here treats 0 as refuse. */
+/* Both rules live in core/src/shell_cmd.c now, where the build backends use
+ * them too; these wrappers keep this file's call sites and its history
+ * readable. The rules themselves are unchanged from the versions this file
+ * used to define: see eos_shell_arg_is_safe() and eos_shell_word_is_safe()
+ * for why each is shaped the way it is. */
 static int is_path_safe(const char *path) {
-    const unsigned char *p;
-    if (!path) return 0;
-    for (p = (const unsigned char *)path; *p; p++) {
-        if (*p < 0x20 || *p == 0x7f) return 0;
-        if (strchr(";|&><$()\"'`\\", (char)*p)) return 0;
-    }
-    return 1;
+    return eos_shell_arg_is_safe(path);
 }
 
-/* Two busybox call sites interpolate without surrounding quotes
- * (`make -C "%s" %s` and ` CROSS_COMPILE=%s`), where a single space is
- * already enough to turn one argument into two. Those use this instead.
- *
- * This was a second denylist -- space, tab, *, ?, ~ -- and it had the same
- * shape of hole as the first one: it missed [ and ] (a glob character class)
- * and { } (brace expansion, which /bin/sh performs when it is bash), all of
- * which reach make unquoted. Answering an incomplete denylist with another
- * denylist just moves the next gap further out.
- *
- * "One shell word" has a small positive definition, so it is written as one.
- * isalnum() plus ._/+=:- covers every defconfig target, cross-compile prefix,
- * hash algorithm name and hex root hash this tree uses, and an allowlist
- * cannot be incomplete.
- *
- * A leading '-' is refused separately: it is built from allowed characters
- * but turns `make -C dir <defconfig>` into an option rather than a target.
- *
- * The empty string is a word. An unset cross_compile is the ordinary case,
- * and every caller checks the field for content before interpolating it. */
 static int is_word_safe(const char *word) {
-    const unsigned char *p;
-    if (!word) return 0;
-    if (word[0] == '-') return 0;
-    for (p = (const unsigned char *)word; *p; p++) {
-        if (isalnum(*p)) continue;
-        if (strchr("._/+=:-", (char)*p)) continue;
-        return 0;
-    }
-    return 1;
+    return eos_shell_word_is_safe(word);
 }
 
 int eos_selinux_install_to_rootfs(const EosSelinux *se, const char *rootfs_dir) {
