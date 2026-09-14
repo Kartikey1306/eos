@@ -15,8 +15,8 @@ Measured on 2026-09-14 against origin/master of eos, eBoot and ebuild (eos `9ed6
 | Platform enum | — | 24 `eos_platform_t` enumerators in `include/eos_hal.h` | `MCU_DATABASE` 171 keys in `eos_hw_analyzer.py`, using 52 distinct `arch` strings | ⚠️ The 24 reproduces. `MCU_DATABASE` describes MCUs by `arch` strings (`arm`, `mips64`, `sh`, …) that share no vocabulary with the enumerators, and nothing maps one onto the other. |
 | Peripheral keywords | 33 peripheral families with an `eos_<family>_init()`: 5 in `hal/include/eos/hal.h`, 28 in `hal/include/eos/hal_extended.h` | — | `PERIPHERAL_KEYWORDS` 46 keywords mapping to 24 distinct types in `eos_hw_analyzer.py`; `ComponentDB` 114 parts in `component_db.py` (its docstring says 200+) | ⚠️ 33 and 24 reproduce; 200+ does not (114). Only 21 of the 24 types are HAL family names: `ethernet`, `gps`, `watchdog` are spelled `eth`, `gnss`, `wdt` in the HAL, and `cellular`, `flash`, `gpu`, `haptic`, `hdmi`, `ir`, `pcie`, `radar`, `touch` have no keyword at all. |
 | Multicore support | `kernel/include/eos/multicore.h` (38 declarations: `eos_core_*`, `eos_spin_*`, `eos_ipi_*`, `eos_rproc_*`, `eos_shmem_*`, …) | `include/eos_multicore.h` (12 `eos_multicore_*` declarations) | `MULTICORE_MCUS` 13 names in `eos_project_generator.py` | ⚠️ All three exist, and that is all that was checked: the two headers are different APIs, and nothing compares either of them to `MULTICORE_MCUS`. |
-| Config generation | 34 `#define EOS_ENABLE_*` in `include/eos/eos_config.h` | `eboot_flash_layout.h` is not a file in eBoot (0 tracked files); it is generated output that eBoot only documents (`configs/README.md`, `docs/quickstart.md`, `docs/book/book.md`) | `EosConfigGenerator.generate_eos_config_h()` writes `eos_product_config.h`; `EosBootIntegrator.generate_from_boot_yaml()` writes `eboot_flash_layout.h` | ⚠️ 39 did not reproduce (34), and "`EosConfigGenerator` produces both" was wrong: two classes, two files. ebuild names 24 `EOS_ENABLE_*` flags (all in `eos_hw_analyzer.py`); 19 are defined in `eos_config.h`, `EOS_ENABLE_GPIO`/`I2C`/`SPI`/`TIMER`/`UART` are defined nowhere in eos, and 15 `eos_config.h` flags (`EOS_ENABLE_MULTICORE`, `EOS_ENABLE_NET`, `EOS_ENABLE_PCIE`, …) are never named by ebuild. |
-| Templates | — | — | 6 directories in `templates/` at the ebuild repo root (`bare-metal`, `ble-sensor`, `linux-app`, `rtos-app`, `safety-critical`, `secure-boot`); `ebuild/templates/` does not exist | ⚠️ "5 in `ebuild/templates/`" did not reproduce: 6, at a different path. Nothing in eos or eboot refers to them, so there is nothing to align against. |
+| Config generation | 34 `#define EOS_ENABLE_*` in `include/eos/eos_config.h` | `eboot_flash_layout.h` is not a file in eBoot (0 tracked files); it is generated output that eBoot only documents (`configs/README.md`, `docs/quickstart.md`, `docs/book/book.md`) | `EosConfigGenerator.generate_eos_config_h()` writes `eos_product_config.h`; `EosBootIntegrator.generate_from_boot_yaml()` writes `eboot_flash_layout.h` | ⚠️ 39 did not reproduce (34), and "`EosConfigGenerator` produces both" was wrong: two classes, two files. Across `ebuild/**/*.py` (`eos_hw_analyzer.py` 24, `eos_project_generator.py` 24, `component_db.py` 23; 29 distinct) ebuild names 29 `EOS_ENABLE_*` flags; 24 are defined in `eos_config.h`, `EOS_ENABLE_GPIO`/`I2C`/`SPI`/`TIMER`/`UART` are defined nowhere in eos, and 10 `eos_config.h` flags (`EOS_ENABLE_DISPLAY_DRV`, `EOS_ENABLE_ETHERNET_DRV`, `EOS_ENABLE_GPU`, `EOS_ENABLE_HDMI`, `EOS_ENABLE_MULTICORE`, `EOS_ENABLE_NET`, `EOS_ENABLE_PCIE`, `EOS_ENABLE_PCIE_DRV`, `EOS_ENABLE_SDIO`, `EOS_ENABLE_USB_HOST`) are never named by ebuild. |
+| Templates | — | — | 6 directories in `templates/` at the ebuild repo root (`bare-metal`, `ble-sensor`, `linux-app`, `rtos-app`, `safety-critical`, `secure-boot`); `ebuild/templates/` does not exist | ⚠️ "5 in `ebuild/templates/`" did not reproduce: 6, at a different path. eos names four of them by their `ebuild new --template` spelling (`bare-metal` in `GETTING_STARTED.md` and `docs/quickstart-host.md`, `ble-sensor` in `docs/quickstart-nrf52.md`, `linux-app` in `docs/quickstart-rpi4.md`); all four exist in ebuild's `templates/`. eBoot names none. Nothing checks that a documented template name exists. |
 | CLI commands | cmake build (`CMakeLists.txt`) | cmake build (`CMakeLists.txt`) | `new`, `build`, `analyze`, `generate-project` are `@cli.command` functions in `ebuild/cli/commands.py` (23 `@cli.command` entries plus the `repos` group with 6 subcommands) | ✅ The four named subcommands exist by name. That is a presence check on ebuild alone, not an inventory comparison. |
 
 ---
@@ -99,11 +99,12 @@ print("headers without PRODUCT_MAP entry", sorted(prods - pm))
 print("headers without config branch", sorted(prods - chain), "| PRODUCT_MAP keys without header", sorted(pm - prods))
 
 enables = set(re.findall(r"^\s*#\s*define\s+(EOS_ENABLE_[A-Z0-9_]+)", cfg, re.M))
-named = set(re.findall(r"EOS_ENABLE_[A-Z0-9_]+",
-                       show("ebuild", "ebuild/eos_ai/eos_hw_analyzer.py")
-                       + show("ebuild", "ebuild/eos_ai/eos_config_generator.py")))
-print("EOS_ENABLE_* defines", len(enables), "| named in ebuild", len(named), "| common", len(enables & named),
-      "| ebuild-only", sorted(named - enables), "| eos-only", len(enables - named))
+py_files = [l for l in subprocess.run(["git", "-C", "ebuild", "ls-tree", "-r", "--name-only",
+                                        "origin/master", "ebuild/"], capture_output=True,
+                                       text=True, check=True).stdout.split() if l.endswith(".py")]
+named = set(re.findall(r"EOS_ENABLE_[A-Z0-9_]+", "".join(show("ebuild", f) for f in py_files)))
+print("EOS_ENABLE_* defines", len(enables), "| named in ebuild/**/*.py", len(named), "| common", len(enables & named),
+      "| ebuild-only", sorted(named - enables), "| eos-only", sorted(enables - named))
 
 fam = set()
 for h in ("hal/include/eos/hal.h", "hal/include/eos/hal_extended.h"):
@@ -132,7 +133,7 @@ EOS_BOARD_MAP distinct values 81 | values that are eos yaml 81 | eos yaml never 
 products/*.h 48 | eos_config.h product branches 42 | PRODUCT_MAP 41
 headers without PRODUCT_MAP entry ['cast_device', 'desktop', 'home_camera', 'iptv_stb', 'smart_speaker', 'tv_os', 'vbox_test']
 headers without config branch ['cast_device', 'desktop', 'home_camera', 'iptv_stb', 'smart_speaker', 'tv_os'] | PRODUCT_MAP keys without header []
-EOS_ENABLE_* defines 34 | named in ebuild 24 | common 19 | ebuild-only ['EOS_ENABLE_GPIO', 'EOS_ENABLE_I2C', 'EOS_ENABLE_SPI', 'EOS_ENABLE_TIMER', 'EOS_ENABLE_UART'] | eos-only 15
+EOS_ENABLE_* defines 34 | named in ebuild/**/*.py 29 | common 24 | ebuild-only ['EOS_ENABLE_GPIO', 'EOS_ENABLE_I2C', 'EOS_ENABLE_SPI', 'EOS_ENABLE_TIMER', 'EOS_ENABLE_UART'] | eos-only ['EOS_ENABLE_DISPLAY_DRV', 'EOS_ENABLE_ETHERNET_DRV', 'EOS_ENABLE_GPU', 'EOS_ENABLE_HDMI', 'EOS_ENABLE_MULTICORE', 'EOS_ENABLE_NET', 'EOS_ENABLE_PCIE', 'EOS_ENABLE_PCIE_DRV', 'EOS_ENABLE_SDIO', 'EOS_ENABLE_USB_HOST']
 HAL init families 33 | keyword types that are HAL families 21 | keyword types that are not ['ethernet', 'gps', 'watchdog'] | HAL families with no keyword ['cellular', 'eth', 'flash', 'gnss', 'gpu', 'haptic', 'hdmi', 'ir', 'pcie', 'radar', 'touch', 'wdt']
 ```
 
