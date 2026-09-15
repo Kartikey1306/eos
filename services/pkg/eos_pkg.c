@@ -49,6 +49,8 @@
   #include <sys/wait.h>
   #include <signal.h>
   #include <dirent.h>
+  #include <errno.h>
+  #include <fcntl.h>
   #include <spawn.h>
   extern char **environ;
   #define EOS_PATH_SEP   '/'
@@ -120,28 +122,40 @@ static int eos_rmdir_recursive(const char *path)
     return rc;
 }
 #else
-static int eos_rmdir_recursive(const char *path)
+/* Remove everything under an open directory descriptor, then the
+ * descriptor's own entry is removed by the caller. Every entry is acted
+ * on relative to the descriptor, never through a path that was checked
+ * a moment earlier: unlinkat() first, which removes a file or a symlink
+ * (never following it); only when the kernel says the entry is a
+ * directory is it opened with O_NOFOLLOW and descended into. Nothing is
+ * stat'ed and then trusted. Consumes dfd. */
+static int rm_tree_fd(int dfd)
 {
-    DIR *d = opendir(path);
+    DIR *d = fdopendir(dfd);
     struct dirent *e;
     int rc = 0;
 
-    if (!d) return rmdir(path);
+    if (!d) { close(dfd); return -1; }
     while ((e = readdir(d)) != NULL) {
-        char child[EAPP_MAX_PATH + 4];
-        struct stat st;
+        int cfd;
         if (strcmp(e->d_name, ".") == 0 || strcmp(e->d_name, "..") == 0) continue;
-        snprintf(child, sizeof(child), "%s/%s", path, e->d_name);
-        if (lstat(child, &st) != 0) { rc = -1; continue; }
-        if (S_ISDIR(st.st_mode)) {
-            if (eos_rmdir_recursive(child) != 0) rc = -1;
-        } else if (unlink(child) != 0) {
-            rc = -1;
-        }
+        if (unlinkat(dfd, e->d_name, 0) == 0) continue;
+        if (errno != EISDIR && errno != EPERM) { rc = -1; continue; } /* Linux says EISDIR, BSDs EPERM */
+        cfd = openat(dfd, e->d_name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+        if (cfd < 0) { rc = -1; continue; }
+        if (rm_tree_fd(cfd) != 0) rc = -1;
+        if (unlinkat(dfd, e->d_name, AT_REMOVEDIR) != 0) rc = -1;
     }
     closedir(d);
-    if (rmdir(path) != 0) rc = -1;
     return rc;
+}
+
+static int eos_rmdir_recursive(const char *path)
+{
+    int fd = open(path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    if (fd < 0) return -1;
+    if (rm_tree_fd(fd) != 0) return -1;
+    return rmdir(path);
 }
 #endif
 

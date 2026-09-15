@@ -88,6 +88,22 @@ static int path_exists(const char *path)
     return stat(path, &st) == 0;
 }
 
+/* Fixture files are created 0600 (fopen("wb") would be 0666 masked by
+ * umask), the way write_eapp_named() already creates the package. */
+static FILE *create_fixture(const char *path)
+{
+#ifdef _WIN32
+    return fopen(path, "wb");
+#else
+    int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR);
+    FILE *f;
+    if (fd < 0) return NULL;
+    f = fdopen(fd, "wb");
+    if (!f) close(fd);
+    return f;
+#endif
+}
+
 static void remove_tree_best_effort(const char *dir, const char *file)
 {
     char p[512];
@@ -371,12 +387,18 @@ TEST(test_remove_deletes_the_package_tree_and_nothing_else)
     snprintf(p, sizeof(p), "%s/%s/nested", APPS_DIR, GOOD_ID);
     ASSERT(eos_test_mkdir(p) == 0);
     snprintf(p, sizeof(p), "%s/%s/nested/`touch " DB_SENTINEL "`", APPS_DIR, GOOD_ID);
-    f = fopen(p, "wb"); ASSERT(f != NULL); fputs("x", f); fclose(f);
+    f = create_fixture(p); ASSERT(f != NULL); fputs("x", f); fclose(f);
     /* A sibling package directory that must survive. */
     snprintf(p, sizeof(p), "%s/sibling", APPS_DIR);
     ASSERT(eos_test_mkdir(p) == 0);
     snprintf(p, sizeof(p), "%s/sibling/keep", APPS_DIR);
-    f = fopen(p, "wb"); ASSERT(f != NULL); fputs("x", f); fclose(f);
+    f = create_fixture(p); ASSERT(f != NULL); fputs("x", f); fclose(f);
+#ifndef _WIN32
+    /* And a symlink from inside the package to the sibling: the walk must
+     * remove the link, not what it points at. */
+    snprintf(p, sizeof(p), "%s/%s/nested/link-to-sibling", APPS_DIR, GOOD_ID);
+    ASSERT(symlink("../../sibling", p) == 0);
+#endif
 
     remove(DB_SENTINEL);
     ASSERT(eos_pkg_remove(&db, GOOD_ID) == 0);
