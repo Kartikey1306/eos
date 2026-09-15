@@ -273,17 +273,20 @@ TEST(test_ota_install_copies_the_file_and_runs_nothing) {
     f = fopen(target, "rb");
     ASSERT(f != NULL);
     n = fread(back, 1, sizeof(back), f);
-    fclose(f);
-    ASSERT(n == sizeof(payload));
-    ASSERT(memcmp(back, payload, sizeof(payload)) == 0);
 #ifndef _WIN32
     {
-        /* The installed image is owner read/write only, whatever the umask. */
+        /* The installed image is owner read/write only, whatever the umask.
+         * Read the mode off the open descriptor, not the path: a path
+         * stat'ed here and removed below is a check-then-use CodeQL
+         * rightly flags, even in a test. */
         struct stat st;
-        ASSERT(stat(target, &st) == 0);
+        ASSERT(fstat(fileno(f), &st) == 0);
         ASSERT((st.st_mode & 077) == 0);
     }
 #endif
+    fclose(f);
+    ASSERT(n == sizeof(payload));
+    ASSERT(memcmp(back, payload, sizeof(payload)) == 0);
 
     remove(target);
     remove(ota.local_path);
