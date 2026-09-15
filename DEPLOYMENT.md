@@ -131,7 +131,8 @@ bash scripts/qemu/boot_test.sh _build_arm
 # Flash eBoot first
 cd eBoot
 cmake -B build -DEBLDR_BOARD=stm32f4 \
-  -DCMAKE_TOOLCHAIN_FILE=../eos/toolchains/arm-cortex-m4.cmake
+  -DCMAKE_TOOLCHAIN_FILE=../eos/toolchains/arm-cortex-m4.cmake \
+  -DEBLDR_PRODUCTION_KEY=<64 hex characters: your Ed25519 public key>
 cmake --build build
 openocd -f interface/stlink.cfg -f target/stm32f4x.cfg \
   -c "program build/ebldr_stage0.bin 0x08000000 verify reset exit"
@@ -180,6 +181,7 @@ ctest --test-dir build
 
 # Cross-compile for STM32F4
 cmake -B build-arm -DEBLDR_BOARD=stm32f4 \
+  -DCMAKE_BUILD_TYPE=Debug \
   -DCMAKE_SYSTEM_NAME=Generic \
   -DCMAKE_C_COMPILER=arm-none-eabi-gcc \
   -DCMAKE_C_FLAGS="-mcpu=cortex-m4 -mthumb -specs=nosys.specs"

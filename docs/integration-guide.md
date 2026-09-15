@@ -82,7 +82,7 @@ EXTRA_OECMAKE = "-DEOS_PRODUCT=gateway"
 
 ```bash
 cd EoS/eboot
-cmake -B build -DEBLDR_BOARD=nrf52
+cmake -B build -DEBLDR_BOARD=nrf52 -DCMAKE_BUILD_TYPE=Debug
 cmake --build build
 ```
 
@@ -191,7 +191,7 @@ cmake --build build
 
 # Build eboot
 cd ../eboot
-cmake -B build -DEBLDR_BOARD=nrf52
+cmake -B build -DEBLDR_BOARD=nrf52 -DCMAKE_BUILD_TYPE=Debug
 cmake --build build
 ```
 

@@ -206,7 +206,7 @@ cmake --build build
 
 # Step 4: Build eboot (uses eboot CMakeLists.txt)
 cd EoS/eboot
-cmake -B build -DEBLDR_BOARD=nrf52
+cmake -B build -DEBLDR_BOARD=nrf52 -DCMAKE_BUILD_TYPE=Debug
 cmake --build build
 # Outputs: libeboot_hal.a, libeboot_core.a, ebldr_stage0.bin, eboot_firmware.bin
 
