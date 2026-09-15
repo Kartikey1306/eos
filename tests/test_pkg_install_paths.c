@@ -24,12 +24,14 @@
 #include <direct.h>
 #define eos_test_rmdir(p) _rmdir(p)
 #define eos_test_mkdir(p) _mkdir(p)
+#define SEP "\\"   /* what install joins paths with; load_db compares the string exactly */
 #else
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #define eos_test_rmdir(p) rmdir(p)
 #define eos_test_mkdir(p) mkdir(p, 0755)
+#define SEP "/"
 #endif
 #include <stdlib.h>
 #include <string.h>
@@ -327,13 +329,13 @@ TEST(test_load_db_drops_a_record_that_would_reach_a_shell)
     memset(hostile, 0, sizeof(*hostile));
     snprintf(hostile->name, sizeof(hostile->name), "%s", "x\" ; touch " DB_SENTINEL " ; \"");
     snprintf(hostile->package_id, sizeof(hostile->package_id), "%s", "hostile");
-    snprintf(hostile->install_path, sizeof(hostile->install_path), "%s/hostile", APPS_DIR);
+    snprintf(hostile->install_path, sizeof(hostile->install_path), "%s" SEP "hostile", APPS_DIR);
     hostile->state = EAPP_STATE_RUNNING;
     eapp_package_t *fine = &db.packages[2];
     memset(fine, 0, sizeof(*fine));
     snprintf(fine->name, sizeof(fine->name), "%s", GOOD_NAME);
     snprintf(fine->package_id, sizeof(fine->package_id), "%s", GOOD_ID);
-    snprintf(fine->install_path, sizeof(fine->install_path), "%s/%s", APPS_DIR, GOOD_ID);
+    snprintf(fine->install_path, sizeof(fine->install_path), "%s" SEP "%s", APPS_DIR, GOOD_ID);
     fine->state = EAPP_STATE_INSTALLED;
     db.count = 3;
     ASSERT(eos_pkg_save_db(&db) == 0);
