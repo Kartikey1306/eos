@@ -259,6 +259,74 @@ static void test_gdb_corrupt_checksum_is_nacked_and_the_session_continues(void) 
     printf("[PASS] gdb corrupt checksum is NACKed and the session continues\n");
 }
 
+/* A peer that keeps sending body bytes and never a '#' must not hold the
+ * exception handler forever. The read below hands out 'x' until a cap and
+ * only then reports the transport gone; the stub is expected to give up on
+ * the body long before that, saying so with a '-'. The unbounded loop this
+ * pins against read every byte to the cap and wrote nothing. */
+#define ENDLESS_CAP 20000
+static size_t endless_reads;
+static size_t reads_at_first_write;
+
+static int mock_read_endless(void *ctx, uint8_t *buf, int len) {
+    (void)ctx;
+    int n = 0;
+    while (n < len && endless_reads < ENDLESS_CAP) {
+        buf[n++] = (endless_reads == 0) ? '$' : 'x';
+        endless_reads++;
+    }
+    return n;
+}
+
+/* The stop reply ($S05#..) goes out before anything is read; the write to
+ * time is the first ack byte, which is the stub's verdict on the body. */
+static int mock_write_first(void *ctx, const uint8_t *buf, int len) {
+    if (reads_at_first_write == 0 && len == 1 && (buf[0] == '-' || buf[0] == '+'))
+        reads_at_first_write = endless_reads;
+    return mock_write(ctx, buf, len);
+}
+
+static void test_gdb_body_that_never_ends_is_abandoned(void) {
+    gdb_reset();
+    endless_reads = 0;
+    reads_at_first_write = 0;
+    EosGdbStub stub;
+    EosGdbIO io = { mock_read_endless, mock_write_first, NULL };
+    eos_gdb_init(&stub, EOS_GDB_TRANSPORT_TCP);
+    eos_gdb_set_io(&stub, &io);
+    eos_gdb_start(&stub, 0);
+    eos_gdb_handle_exception(&stub, 5);          /* returns: the cap ends the transport */
+
+    assert(reads_at_first_write > 0);            /* an ack was written before the cap at all */
+    char verdict = first_ack();                  /* the ack after the stop reply */
+    unsigned size = advertised_packet_size();    /* separate scripted session */
+    assert(reads_at_first_write <= 2u * size + 8u);  /* ... after at most the buffer plus one more body's worth */
+    assert(verdict == '-');                      /* and it was a refusal */
+    printf("[PASS] gdb body that never ends is abandoned with a NACK\n");
+}
+
+/* The advertised PacketSize is what GDB sizes an M transfer from, so the
+ * memory cap has to be derived from it (tests/unit/test_gdb_stub_limits.py
+ * pins the derivation in the source). The accept path cannot run here --
+ * the memory hooks dereference the 32-bit address on a 64-bit host, as the
+ * note at the top of this file says -- so this pins the boundary from the
+ * refusing side: one byte more than the packet can carry is E01, and the
+ * cap is where the packet size says it is, not at the old literal 128. */
+static void test_gdb_memory_transfer_one_past_the_cap_is_refused(void) {
+    unsigned size = advertised_packet_size();
+    unsigned cap = (size - 15) / 2;              /* "M<addr>,<len>:" is at most 15 chars */
+    assert(cap > 128);                           /* the old literal cap, well below what the packet carries */
+    char body[64];
+    gdb_reset();
+    snprintf(body, sizeof(body), "M0,%x:aabb", cap + 1);
+    gdb_push(body);
+    gdb_push("D");
+    gdb_run();
+    assert(first_ack() == '+');                  /* well-formed packet ... */
+    assert(tx_has("E01"));                       /* ... refused by the cap */
+    printf("[PASS] gdb memory transfer one past the cap is refused\n");
+}
+
 static void test_coredump_init(void) {
     assert(eos_coredump_init(EOS_DUMP_TARGET_RAM) == 0);
     assert(!eos_coredump_exists());
@@ -318,6 +386,8 @@ int main(void) {
     test_gdb_packet_of_the_advertised_size_is_accepted();
     test_gdb_packet_longer_than_advertised_does_not_desync();
     test_gdb_corrupt_checksum_is_nacked_and_the_session_continues();
+    test_gdb_body_that_never_ends_is_abandoned();
+    test_gdb_memory_transfer_one_past_the_cap_is_refused();
     test_coredump_init();
     test_coredump_capture();
     test_coredump_clear();

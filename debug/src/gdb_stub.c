@@ -56,6 +56,16 @@ static int send_packet(EosGdbStub *stub, const char *data) {
 #define GDB_PKT_BUF   512
 #define GDB_PKT_MAX   (GDB_PKT_BUF - 1)
 
+/* The most memory one m/M packet may move, derived from GDB_PKT_MAX so the
+ * two cannot drift apart either: an M packet is "M<addr>,<len>:" -- up to
+ * 15 characters with a 32-bit address -- followed by two hex digits per
+ * byte, and it has to fit the body the stub accepts. GDB sizes its bulk
+ * transfers from PacketSize, so a cap below this is a request the stub
+ * invited and then refused. The reply to an m packet is 2*len characters
+ * and fits send_packet()'s buffer for the same reason. */
+#define GDB_MEM_HDR   15
+#define GDB_MEM_MAX   ((GDB_PKT_MAX - GDB_MEM_HDR) / 2)
+
 /* recv_packet() results below zero: */
 #define GDB_RECV_TRANSPORT_GONE  (-1)   /* read failed: the session is over */
 #define GDB_RECV_BAD_PACKET      (-2)   /* checksum or size: '-' was sent, GDB will resend */
@@ -71,12 +81,24 @@ static int recv_packet(EosGdbStub *stub, char *buf, int maxlen) {
      * its '#' and refused with '-', so the checksum and the next packet are
      * read from where they really are. Stopping early and treating the next
      * two body bytes as the checksum left the stream out of step. */
-    int i = 0, overflow = 0;
+    int i = 0, overflow = 0, drained = 0;
     for (;;) {
         if (stub->io.read(stub->io.ctx, &c, 1) != 1) return GDB_RECV_TRANSPORT_GONE;
         if (c == '#') break;
-        if (i < maxlen - 1) buf[i++] = (char)c;
-        else overflow = 1;
+        if (i < maxlen - 1) {
+            buf[i++] = (char)c;
+        } else if (++drained > GDB_PKT_MAX) {
+            /* Draining is for a body that is merely too long. One that never
+             * ends -- a peer that keeps sending and never a '#' -- would
+             * otherwise hold the exception handler forever. Give up on it
+             * as a bad packet: '-' goes out, the session stays up, and the
+             * '$' search above resynchronises on whatever comes next. */
+            uint8_t nack = '-';
+            if (stub->io.write) stub->io.write(stub->io.ctx, &nack, 1);
+            return GDB_RECV_BAD_PACKET;
+        } else {
+            overflow = 1;
+        }
     }
     buf[i] = '\0';
 
@@ -129,23 +151,23 @@ static void handle_query(EosGdbStub *stub, const char *pkt) {
 
 static void handle_read_mem(EosGdbStub *stub, const char *pkt) {
     uint32_t addr = 0, len = 0;
-    if (sscanf(pkt, "m%x,%x", &addr, &len) != 2 || len > 128) {
+    if (sscanf(pkt, "m%x,%x", &addr, &len) != 2 || len > GDB_MEM_MAX) {
         send_packet(stub, "E01");
         return;
     }
-    uint8_t buf[128];
+    uint8_t buf[GDB_MEM_MAX];
     if (eos_gdb_read_mem(addr, buf, (int)len) != 0) {
         send_packet(stub, "E02");
         return;
     }
-    char resp[257];
+    char resp[GDB_MEM_MAX * 2 + 1];
     hex_encode(resp, buf, (int)len);
     send_packet(stub, resp);
 }
 
 static void handle_write_mem(EosGdbStub *stub, const char *pkt) {
     uint32_t addr = 0, len = 0;
-    if (sscanf(pkt, "M%x,%x:", &addr, &len) != 2 || len > 128) {
+    if (sscanf(pkt, "M%x,%x:", &addr, &len) != 2 || len > GDB_MEM_MAX) {
         send_packet(stub, "E01");
         return;
     }
@@ -159,7 +181,7 @@ static void handle_write_mem(EosGdbStub *stub, const char *pkt) {
      * remote peer chose. */
     if (strlen(data) < (size_t)len * 2u) { send_packet(stub, "E01"); return; }
 
-    uint8_t buf[128];
+    uint8_t buf[GDB_MEM_MAX];
     for (uint32_t i = 0; i < len; i++) {
         int hi = hex_val_checked(data[i * 2]);
         int lo = hex_val_checked(data[i * 2 + 1]);
