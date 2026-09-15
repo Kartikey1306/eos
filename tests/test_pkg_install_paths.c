@@ -23,11 +23,13 @@
 #include <eos/eos_windows.h>
 #include <direct.h>
 #define eos_test_rmdir(p) _rmdir(p)
+#define eos_test_mkdir(p) _mkdir(p)
 #else
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #define eos_test_rmdir(p) rmdir(p)
+#define eos_test_mkdir(p) mkdir(p, 0755)
 #endif
 #include <stdlib.h>
 #include <string.h>
@@ -102,6 +104,15 @@ static void clean_fixture(void)
 {
     char p[512];
     remove(EAPP_PATH);
+    remove("test_install_paths_db_sentinel");
+    snprintf(p, sizeof(p), "%s/%s/nested/`touch test_install_paths_db_sentinel`", APPS_DIR, GOOD_ID);
+    remove(p);
+    snprintf(p, sizeof(p), "%s/%s/nested", APPS_DIR, GOOD_ID);
+    eos_test_rmdir(p);
+    snprintf(p, sizeof(p), "%s/sibling/keep", APPS_DIR);
+    remove(p);
+    snprintf(p, sizeof(p), "%s/sibling", APPS_DIR);
+    eos_test_rmdir(p);
     remove_tree_best_effort(ESCAPE_DIR, GOOD_NAME);
     remove_tree_best_effort(ESCAPE_DIR, "payload");
     snprintf(p, sizeof(p), "%s/%s", APPS_DIR, GOOD_ID);
@@ -288,6 +299,106 @@ TEST(test_update_refuses_a_bad_package_id_before_looking_it_up)
     ASSERT(!path_exists(ESCAPE_DIR));
 }
 
+/* The db is the other ingress. A record written by an earlier version of
+ * this tool from an unvalidated header carries whatever the header did, and
+ * remove() used to hand its install_path to `rm -rf "..."` through
+ * system(): install_path = apps/x" ; touch sentinel ; echo " ran the touch
+ * and reported the package removed. load_db() now drops a record whose
+ * names are not names, or whose install_path is not the one install builds,
+ * so remove() and stop() never see it. */
+#define DB_SENTINEL "test_install_paths_db_sentinel"
+
+TEST(test_load_db_drops_a_record_that_would_reach_a_shell)
+{
+    eapp_db_t db;
+    fresh_db(&db);
+    remove(DB_SENTINEL);
+
+    /* Write the db the way the pre-fix tool would have: a record whose
+     * install_path carries a shell escape, and one whose name does. */
+    eapp_package_t *legacy = &db.packages[0];
+    memset(legacy, 0, sizeof(*legacy));
+    snprintf(legacy->name, sizeof(legacy->name), "%s", "payload");
+    snprintf(legacy->package_id, sizeof(legacy->package_id), "%s", "legacy");
+    snprintf(legacy->install_path, sizeof(legacy->install_path),
+             "%s/x\" ; touch " DB_SENTINEL " ; echo \"", APPS_DIR);
+    legacy->state = EAPP_STATE_INSTALLED;
+    eapp_package_t *hostile = &db.packages[1];
+    memset(hostile, 0, sizeof(*hostile));
+    snprintf(hostile->name, sizeof(hostile->name), "%s", "x\" ; touch " DB_SENTINEL " ; \"");
+    snprintf(hostile->package_id, sizeof(hostile->package_id), "%s", "hostile");
+    snprintf(hostile->install_path, sizeof(hostile->install_path), "%s/hostile", APPS_DIR);
+    hostile->state = EAPP_STATE_RUNNING;
+    eapp_package_t *fine = &db.packages[2];
+    memset(fine, 0, sizeof(*fine));
+    snprintf(fine->name, sizeof(fine->name), "%s", GOOD_NAME);
+    snprintf(fine->package_id, sizeof(fine->package_id), "%s", GOOD_ID);
+    snprintf(fine->install_path, sizeof(fine->install_path), "%s/%s", APPS_DIR, GOOD_ID);
+    fine->state = EAPP_STATE_INSTALLED;
+    db.count = 3;
+    ASSERT(eos_pkg_save_db(&db) == 0);
+
+    /* Reload: two records dropped, the well-formed one kept. */
+    ASSERT(eos_pkg_init(&db, APPS_DIR) == 0);
+    ASSERT(db.count == 1);
+    ASSERT(strcmp(db.packages[0].package_id, GOOD_ID) == 0);
+    ASSERT(eos_pkg_find(&db, "legacy") == NULL);
+    ASSERT(eos_pkg_find(&db, "hostile") == NULL);
+
+    /* Neither can be acted on, and nothing ran. */
+    ASSERT(eos_pkg_remove(&db, "legacy") != 0);
+    ASSERT(eos_pkg_stop(&db, "hostile") != 0);
+    ASSERT(!path_exists(DB_SENTINEL));
+}
+
+/* remove() takes the package directory down with a walk in C: a file whose
+ * name would have been shell syntax is just a file, and only the directory
+ * install built is touched -- a sibling stays. */
+TEST(test_remove_deletes_the_package_tree_and_nothing_else)
+{
+    eapp_db_t db;
+    char p[512];
+    FILE *f;
+    fresh_db(&db);
+    write_eapp_with_strings(GOOD_NAME, GOOD_ID);
+    ASSERT(eos_pkg_install(&db, EAPP_PATH) == 0);
+    ASSERT(db.count == 1);
+
+    /* Extra content under the install dir, including a nested directory
+     * and a file with backticks in its name. */
+    snprintf(p, sizeof(p), "%s/%s/nested", APPS_DIR, GOOD_ID);
+    ASSERT(eos_test_mkdir(p) == 0);
+    snprintf(p, sizeof(p), "%s/%s/nested/`touch " DB_SENTINEL "`", APPS_DIR, GOOD_ID);
+    f = fopen(p, "wb"); ASSERT(f != NULL); fputs("x", f); fclose(f);
+    /* A sibling package directory that must survive. */
+    snprintf(p, sizeof(p), "%s/sibling", APPS_DIR);
+    ASSERT(eos_test_mkdir(p) == 0);
+    snprintf(p, sizeof(p), "%s/sibling/keep", APPS_DIR);
+    f = fopen(p, "wb"); ASSERT(f != NULL); fputs("x", f); fclose(f);
+
+    remove(DB_SENTINEL);
+    ASSERT(eos_pkg_remove(&db, GOOD_ID) == 0);
+    ASSERT(db.count == 0);
+    snprintf(p, sizeof(p), "%s/%s", APPS_DIR, GOOD_ID);
+    ASSERT(!path_exists(p));
+    snprintf(p, sizeof(p), "%s/sibling/keep", APPS_DIR);
+    ASSERT(path_exists(p));
+    ASSERT(!path_exists(DB_SENTINEL));
+
+    /* And a record whose install_path is not the directory install built is
+     * refused at the point of removal too, even if it got into memory. */
+    fresh_db(&db);
+    write_eapp_with_strings(GOOD_NAME, GOOD_ID);
+    ASSERT(eos_pkg_install(&db, EAPP_PATH) == 0);
+    snprintf(db.packages[0].install_path, sizeof(db.packages[0].install_path), "%s", APPS_DIR);
+    ASSERT(eos_pkg_remove(&db, GOOD_ID) != 0);
+    ASSERT(path_exists(APPS_DIR));
+    snprintf(p, sizeof(p), "%s/sibling/keep", APPS_DIR);
+    remove(p);
+    snprintf(p, sizeof(p), "%s/sibling", APPS_DIR);
+    eos_test_rmdir(p);
+}
+
 /* The control: the same signed payload under a plain reverse-DNS id and a
  * name with every allowed punctuation character installs where it should. */
 TEST(test_install_accepts_a_plain_name)
@@ -314,6 +425,8 @@ int main(void)
     run_test_unterminated_name_fields_are_refused();
     run_test_empty_name_fields_are_refused();
     run_test_update_refuses_a_bad_package_id_before_looking_it_up();
+    run_test_load_db_drops_a_record_that_would_reach_a_shell();
+    run_test_remove_deletes_the_package_tree_and_nothing_else();
     run_test_install_accepts_a_plain_name();
     clean_fixture();
     printf("%d/%d tests passed\n", tests_passed, tests_run);
