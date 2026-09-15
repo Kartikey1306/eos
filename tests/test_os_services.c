@@ -11,6 +11,11 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#ifndef _WIN32
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#endif
 
 static int tests_run = 0;
 static int tests_passed = 0;
@@ -183,6 +188,22 @@ TEST(test_storage_string) {
 #define OTA_SENTINEL_DL  "eos_ota_probe_download"
 #define OTA_SENTINEL_IN  "eos_ota_probe_install"
 
+/* Fixtures are created 0600, not fopen("wb")'s 0666-masked-by-umask: the
+ * same rule the code under test follows, and the one CodeQL holds this
+ * repository's tests to as well. */
+static FILE *create_fixture(const char *path) {
+#ifdef _WIN32
+    return fopen(path, "wb");
+#else
+    int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR);
+    FILE *f;
+    if (fd < 0) return NULL;
+    f = fdopen(fd, "wb");
+    if (!f) close(fd);
+    return f;
+#endif
+}
+
 static int file_exists(const char *path) {
     FILE *f = fopen(path, "rb");
     if (!f) return 0;
@@ -240,7 +261,7 @@ TEST(test_ota_install_copies_the_file_and_runs_nothing) {
     remove(target);
     eos_ota_init(&ota);
     snprintf(ota.local_path, sizeof(ota.local_path), "%s", "eos_ota_test_source.bin");
-    f = fopen(ota.local_path, "wb");
+    f = create_fixture(ota.local_path);
     ASSERT(f != NULL);
     ASSERT(fwrite(payload, 1, sizeof(payload), f) == sizeof(payload));
     fclose(f);
@@ -255,6 +276,14 @@ TEST(test_ota_install_copies_the_file_and_runs_nothing) {
     fclose(f);
     ASSERT(n == sizeof(payload));
     ASSERT(memcmp(back, payload, sizeof(payload)) == 0);
+#ifndef _WIN32
+    {
+        /* The installed image is owner read/write only, whatever the umask. */
+        struct stat st;
+        ASSERT(stat(target, &st) == 0);
+        ASSERT((st.st_mode & 077) == 0);
+    }
+#endif
 
     remove(target);
     remove(ota.local_path);
