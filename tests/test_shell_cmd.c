@@ -150,6 +150,23 @@ TEST(test_run_reports_the_exit_status_of_a_command_that_ran)
     ASSERT(eos_shell_cmd_run(&cmd, "test") == EOS_ERR_BUILD);
 }
 
+/* A command the shell cannot run at all is an environment problem, and is
+ * reported apart from a command that ran and failed: on POSIX the shell
+ * exits 127 and run() returns EOS_ERR_SYSTEM. cmd.exe reports an unknown
+ * command through an ordinary non-zero status, so there the claim is only
+ * that it is not success. */
+TEST(test_run_tells_a_missing_command_from_a_failed_one)
+{
+    EosShellCmd cmd;
+    eos_shell_cmd_init(&cmd);
+    eos_shell_cmd_text(&cmd, "eos-shell-cmd-no-such-command-4c1e");
+#ifdef _WIN32
+    ASSERT(eos_shell_cmd_run(&cmd, "test") != EOS_OK);
+#else
+    ASSERT(eos_shell_cmd_run(&cmd, "test") == EOS_ERR_SYSTEM);
+#endif
+}
+
 /* ---- the backends, through the builder ------------------------------- */
 
 /* A build directory that would run a command if it reached a shell
@@ -268,6 +285,7 @@ int main(void)
     run_test_a_refused_value_marks_the_command_and_stops_it_growing();
     run_test_a_line_that_does_not_fit_is_refused_not_truncated();
     run_test_run_reports_the_exit_status_of_a_command_that_ran();
+    run_test_run_tells_a_missing_command_from_a_failed_one();
     run_test_every_backend_refuses_a_hostile_directory();
     run_test_configure_refuses_a_hostile_option_and_quotes_a_spaced_one();
     run_test_install_never_runs_a_truncated_line();

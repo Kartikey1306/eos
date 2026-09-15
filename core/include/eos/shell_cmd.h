@@ -112,7 +112,9 @@ int eos_shell_word_is_safe(const char *word);
  *              and logged, and nothing runs.
  * @param what  Short description for the log ("CMake configure").
  * @return EOS_OK when the command exited 0, EOS_ERR_BUILD when it did not,
- *         EOS_ERR_INVALID when it was refused.
+ *         EOS_ERR_SYSTEM when no shell could be started or the shell could
+ *         not run the command at all (exit 127), EOS_ERR_INVALID when the
+ *         command was refused before anything ran.
  */
 EosResult eos_shell_cmd_run(EosShellCmd *cmd, const char *what);
 

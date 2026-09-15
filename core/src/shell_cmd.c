@@ -8,6 +8,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifndef _WIN32
+#include <sys/wait.h>
+#endif
 
 /* Reject anything a shell reads as syntax rather than as text.
  *
@@ -134,5 +137,21 @@ EosResult eos_shell_cmd_run(EosShellCmd *cmd, const char *what) {
     }
     EOS_INFO("%s: %s", what ? what : "shell command", cmd->buf);
     rc = system(cmd->buf);
+    /* "The build failed" and "nothing ran at all" are different problems
+     * for whoever reads the log: -1 is a shell that could not be started
+     * (fork failed, or the status could not be collected), and a POSIX
+     * shell exits 127 when it could not run the command it was given.
+     * Both are the environment, not the build. */
+    if (rc == -1) {
+        EOS_ERROR("%s: could not run a shell at all", what ? what : "shell command");
+        return EOS_ERR_SYSTEM;
+    }
+#ifndef _WIN32
+    if (WIFEXITED(rc) && WEXITSTATUS(rc) == 127) {
+        EOS_ERROR("%s: the shell could not run the command (exit 127)",
+                  what ? what : "shell command");
+        return EOS_ERR_SYSTEM;
+    }
+#endif
     return (rc == 0) ? EOS_OK : EOS_ERR_BUILD;
 }
