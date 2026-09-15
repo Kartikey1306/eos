@@ -11,7 +11,9 @@
 #ifdef _WIN32
 #include <process.h>
 #else
+#include <fcntl.h>
 #include <spawn.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
 extern char **environ;
@@ -136,6 +138,24 @@ static int run_argv(char *const argv[]) {
 #endif
 }
 
+/* Create dst for writing, owner read/write only. fopen("wb") creates with
+ * 0666 masked by umask, so on a permissive umask the installed image would
+ * be readable -- and writable -- by every user on the host. The updater is
+ * the one that writes the image and the one that reads it back, so 0600 is
+ * the right mode; a consumer that needs it wider is a policy of its own. */
+static FILE *create_private(const char *dst) {
+#ifdef _WIN32
+    return fopen(dst, "wb");
+#else
+    int fd = open(dst, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, S_IRUSR | S_IWUSR);
+    FILE *f;
+    if (fd < 0) return NULL;
+    f = fdopen(fd, "wb");
+    if (!f) close(fd);
+    return f;
+#endif
+}
+
 /* Copy src to dst byte for byte. 0 on success; dst is not left half-written
  * on a read or write error only in the sense that the error is reported. */
 static int copy_file(const char *src, const char *dst) {
@@ -145,7 +165,7 @@ static int copy_file(const char *src, const char *dst) {
     size_t n;
     int ok = 1;
     if (!in) return -1;
-    out = fopen(dst, "wb");
+    out = create_private(dst);
     if (!out) { fclose(in); return -1; }
     while ((n = fread(buf, 1, sizeof(buf), in)) > 0) {
         if (fwrite(buf, 1, n, out) != n) { ok = 0; break; }
