@@ -61,7 +61,10 @@ static int failures;
     } \
 } while (0)
 
-/* Same rule for any other fixture step that fails: count it, say so, stop. */
+/* Same rule for any other fixture step that fails: count it and say so. It
+ * does not return -- the cleanup differs per site -- so the caller must
+ * clean up and return itself; REQUIRE_TMPDIR above does return, because a
+ * directory that was never created needs no cleanup. */
 #define FIXTURE_FAILED(what) do { \
     fprintf(stderr, "[FAIL] %s:%d: %s: %s -- the harness could not build its " \
             "fixture; the assertions after this did not run\n", \
@@ -416,7 +419,10 @@ static void test_ima_sign_reports_failure_when_evmctl_is_absent(void) {
      * pointed at it. Third instance of this in the file; the first two were
      * fixed for exactly this. */
     fd = open(target, O_WRONLY | O_CREAT | O_EXCL, S_IRUSR | S_IWUSR);
-    if (fd >= 0) { (void)!write(fd, "x", 1); close(fd); }
+    CHECK(fd >= 0);
+    if (fd < 0) { rmdir(dir); return; }
+    CHECK(write(fd, "x", 1) == 1);
+    close(fd);
 
     eos_ima_init(&ima, EOS_IMA_ENFORCE);
     strncpy(ima.key_file, "/tmp/key.pub", sizeof(ima.key_file) - 1);
@@ -512,7 +518,10 @@ static void test_selinux_label_reports_failure_when_it_cannot_label(void) {
 
     snprintf(fc, sizeof fc, "%s/file_contexts", dir);
     fd = open(fc, O_WRONLY | O_CREAT | O_EXCL, S_IRUSR | S_IWUSR);
-    if (fd >= 0) { (void)!write(fd, "/.*  --  system_u:object_r:default_t\n", 37); close(fd); }
+    CHECK(fd >= 0);
+    if (fd < 0) { rmdir(dir); return; }
+    CHECK(write(fd, "/.*  --  system_u:object_r:default_t\n", 37) == 37);
+    close(fd);
 
     eos_selinux_init(&se, EOS_SELINUX_ENFORCING);
     strncpy(se.file_contexts, fc, sizeof(se.file_contexts) - 1);
@@ -637,7 +646,7 @@ static void test_selinux_install_reports_a_policy_it_did_not_copy(void) {
     fd = open(policy, O_WRONLY | O_CREAT | O_EXCL, S_IRUSR | S_IWUSR);
     CHECK(fd >= 0);
     if (fd < 0) { rmdir(pdir); rmdir(rootfs); return; }
-    (void)!write(fd, "policy\n", 7);
+    CHECK(write(fd, "policy\n", 7) == 7);
     close(fd);
 
     eos_selinux_init(&se, EOS_SELINUX_ENFORCING);
@@ -698,7 +707,7 @@ static void test_selinux_install_guard_stops_a_reachable_injection(void) {
     snprintf(policy, sizeof policy, "%s/targeted", pdir);
     fd = open(policy, O_WRONLY | O_CREAT | O_EXCL, S_IRUSR | S_IWUSR);
     CHECK(fd >= 0);
-    if (fd >= 0) { (void)!write(fd, "policy\n", 7); close(fd); }
+    if (fd >= 0) { CHECK(write(fd, "policy\n", 7) == 7); close(fd); }
 
     eos_selinux_init(&se, EOS_SELINUX_ENFORCING);
     CHECK(eos_selinux_set_policy(&se, pdir, "targeted") == 0);
@@ -816,9 +825,14 @@ static void test_require_tmpdir_fails_rather_than_skips(void) {
         _exit(failures == f0 + 1 ? 0 : 1);
     }
     close(fds[1]);
-    while (total < (ssize_t)sizeof out - 1 &&
-           (n = read(fds[0], out + total, sizeof out - 1 - (size_t)total)) > 0)
-        total += n;
+    /* Retry on EINTR: a signal between fork and exit must not turn a partial
+     * capture into a failed assertion in a test about failures being real. */
+    while (total < (ssize_t)sizeof out - 1) {
+        n = read(fds[0], out + total, sizeof out - 1 - (size_t)total);
+        if (n > 0) { total += n; continue; }
+        if (n < 0 && errno == EINTR) continue;
+        break;
+    }
     out[total] = '\0';
     close(fds[0]);
     waitpid(pid, &status, 0);
