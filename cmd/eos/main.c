@@ -17,6 +17,7 @@
 #include "eos/package.h"
 #include "eos/toolchain.h"
 #include "eos/system.h"
+#include "eos/shell_cmd.h"
 
 #define EOS_VERSION "0.2.0"
 #define DEFAULT_CONFIG "eos.yaml"
@@ -561,23 +562,35 @@ static int cmd_clean(const CliArgs *args) {
         return 0;
     }
 
-    /* Validate build_dir to prevent command injection */
-    if (strpbrk(build_dir, ";|&><$()\"'")) {
-        EOS_ERROR("Invalid build directory path: %s (contains special characters)", build_dir);
+    /* build_dir comes from the project's eos.yaml and is interpolated into a
+     * command that rm -rf reads, so it goes through the same checked builder
+     * the backends use. The denylist that stood here missed the backtick --
+     * command substitution, which a shell performs inside double quotes -- so
+     * a build_dir of  /tmp/x`touch /tmp/marker`  passed the check and ran.
+     * eos_shell_cmd_arg() refuses on the rule linux_security.c shipped:
+     * control characters and ; | & > < $ ( ) " ' ` \ . */
+    EosShellCmd cmd;
+    eos_shell_cmd_init(&cmd);
+#ifdef _WIN32
+    eos_shell_cmd_text(&cmd, "if exist ");
+    eos_shell_cmd_arg(&cmd, build_dir);
+    eos_shell_cmd_text(&cmd, " rmdir /s /q ");
+    eos_shell_cmd_arg(&cmd, build_dir);
+#else
+    eos_shell_cmd_text(&cmd, "rm -rf ");
+    eos_shell_cmd_arg(&cmd, build_dir);
+#endif
+
+    EosResult rc = eos_shell_cmd_run(&cmd, "Clean");
+    if (rc == EOS_ERR_INVALID) {
+        /* Refused before anything ran: eos_shell_cmd_run() has already said
+         * which value it was. Report failure rather than "Clean complete". */
         return 1;
     }
-
-    char cmd[1024];
-#ifdef _WIN32
-    snprintf(cmd, sizeof(cmd), "if exist \"%s\" rmdir /s /q \"%s\"", build_dir, build_dir);
-#else
-    snprintf(cmd, sizeof(cmd), "rm -rf \"%s\"", build_dir);
-#endif
-    int rc = system(cmd);
-    if (rc == 0) {
+    if (rc == EOS_OK) {
         EOS_INFO("Clean complete");
     } else {
-        EOS_WARN("Clean returned non-zero: %d", rc);
+        EOS_WARN("Clean returned non-zero: %s", eos_error_str(rc));
     }
 
     return 0;
