@@ -5,15 +5,16 @@
  * @brief A .eapp header names files; it must not name paths.
  *
  * eos_pkg_install() writes the binary to apps_dir/<package_id>/<name> with
- * both fields taken raw from the package header. The signature covers the
- * binary alone, so a genuinely signed package can carry any package_id and
- * name at all: "../escape" put a 0755 binary outside apps_dir, a field with
- * no terminator was printed and joined into paths past the end of the
- * header struct, and because eos_pkg_remove() hands install_path to
- * `rm -rf "..."` through system(), a quote in package_id reached a shell.
+ * both fields taken raw from the package header. A signature proves who
+ * signed a package, not that its names are safe: a validly signed package
+ * could carry any package_id and name at all. "../escape" put a 0755 binary
+ * outside apps_dir, a field with no terminator was printed and joined into
+ * paths past the end of the header struct, and because eos_pkg_remove()
+ * handed install_path to `rm -rf "..."` through system(), a quote in
+ * package_id reached a shell.
  *
- * The packages below are signed with RFC 8032 section 7.1 Test 2, the same
- * vector test_pkg_trust_anchor.c uses, so every refusal here is about the
+ * The packages below are signed over the v2 envelope (#162) with the same
+ * test key test_pkg_trust_anchor.c uses, so every refusal here is about the
  * name and never about the signature: the control at the end installs the
  * same payload under a plain name and succeeds.
  */
@@ -39,6 +40,7 @@
 
 #include "eos_pkg.h"
 #include <eos/crypto.h>
+#include <ed25519.h>
 
 static int tests_run = 0;
 static int tests_passed = 0;
@@ -62,16 +64,16 @@ static int tests_passed = 0;
     } \
 } while (0)
 
-/* ---- RFC 8032 section 7.1, Test 2: a 1-byte message ---------------------- */
+/* ---- signing key: the one test_pkg_trust_anchor.c uses ------------------- */
 
-static const uint8_t T2_PUB[32] = {
- 0x3d,0x40,0x17,0xc3,0xe8,0x43,0x89,0x5a,0x92,0xb7,0x0a,0xa7,0x4d,0x1b,0x7e,0xbc,
- 0x9c,0x98,0x2c,0xcf,0x2e,0xc4,0x96,0x8c,0xc0,0xcd,0x55,0xf1,0x2a,0xf4,0x66,0x0c};
-static const uint8_t T2_SIG[64] = {
- 0x92,0xa0,0x09,0xa9,0xf0,0xd4,0xca,0xb8,0x72,0x0e,0x82,0x0b,0x5f,0x64,0x25,0x40,
- 0xa2,0xb2,0x7b,0x54,0x16,0x50,0x3f,0x8f,0xb3,0x76,0x22,0x23,0xeb,0xdb,0x69,0xda,
- 0x08,0x5a,0xc1,0xe4,0x3e,0x15,0x99,0x6e,0x45,0x8f,0x36,0x13,0xd0,0xf1,0x1d,0x8c,
- 0x38,0x7b,0x2e,0xae,0xb4,0x30,0x2a,0xee,0xb0,0x0d,0x29,0x16,0x12,0xbb,0x0c,0x00};
+/* The derived public key was cross-validated against OpenSSL there; sign_v2()
+ * asserts the derivation reproduces TEST_PUB, so a drift fails loudly. */
+static const uint8_t TEST_SEED[32] = {
+ 0x00,0x01,0x02,0x03,0x04,0x05,0x06,0x07,0x08,0x09,0x00,0x01,0x02,0x03,0x04,0x05,
+ 0x06,0x07,0x08,0x09,0x00,0x01,0x02,0x03,0x04,0x05,0x06,0x07,0x08,0x09,0x00,0x01};
+static const uint8_t TEST_PUB[32] = {
+ 0xc9,0x9a,0xff,0x66,0x7c,0x75,0x78,0x05,0x6b,0xd7,0xd4,0x59,0x0d,0xf9,0x2b,0xf2,
+ 0xae,0x10,0x8a,0x6a,0x7f,0x33,0xdd,0x52,0x38,0x4a,0x83,0xbf,0x32,0x5f,0x02,0x69};
 static const uint8_t T2_MSG[1] = { 0x72 };
 
 /* ---- fixture layout, all relative to the test's working directory -------- */
@@ -138,6 +140,23 @@ static void clean_fixture(void)
     remove_tree_best_effort(APPS_DIR, ".eapp_db");
 }
 
+/* Sign the v2 envelope of (h, T2_MSG, no resources) with the test key and
+ * embed the signature, so the names below are covered by a real signature. */
+static void sign_v2(eapp_header_t *h)
+{
+    uint8_t digest[EAPP_HASH_LEN];
+    uint8_t pub[EAPP_PUBKEY_LEN], priv[64];
+    uint8_t sig[EAPP_SIGNATURE_LEN];
+
+    ed25519_create_keypair(pub, priv, TEST_SEED);
+    ASSERT(memcmp(pub, TEST_PUB, EAPP_PUBKEY_LEN) == 0);
+    memset(h->signature, 0, sizeof(h->signature));
+    eos_pkg_envelope_digest(h, T2_MSG, (uint32_t)sizeof(T2_MSG), NULL, 0, digest);
+    ed25519_sign(sig, digest, sizeof(digest), pub, priv);
+    memset(priv, 0, sizeof(priv));
+    memcpy(h->signature, sig, sizeof(sig));
+}
+
 /* Write a genuinely signed package whose name fields are exactly `name_raw`
  * and `id_raw` (raw_len bytes each, copied without a terminator so an
  * unterminated field can be produced on purpose). */
@@ -161,11 +180,11 @@ static void write_eapp_named(const uint8_t *name_raw, size_t name_len,
     memset(h.supported_archs, 1, sizeof(h.supported_archs));
     h.binary_offset = (uint32_t)sizeof(h);
     h.binary_size = (uint32_t)sizeof(T2_MSG);
-    memcpy(h.signature, T2_SIG, EAPP_SIGNATURE_LEN);
 
     eos_sha256_init(&c);
     eos_sha256_update(&c, T2_MSG, sizeof(T2_MSG));
     eos_sha256_final(&c, h.hash);
+    sign_v2(&h);
 
 #ifdef _WIN32
     f = fopen(EAPP_PATH, "wb");
@@ -192,7 +211,7 @@ static void write_eapp_with_strings(const char *name, const char *id)
 static void fresh_db(eapp_db_t *db)
 {
     clean_fixture();
-    ASSERT(eos_pkg_set_trust_anchor(T2_PUB) == 0);
+    ASSERT(eos_pkg_set_trust_anchor(TEST_PUB) == 0);
     ASSERT(eos_pkg_init(db, APPS_DIR) == 0);
     ASSERT(db->count == 0);
 }
