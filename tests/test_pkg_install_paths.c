@@ -269,6 +269,28 @@ TEST(test_install_refuses_dot_and_dotdot)
     ASSERT(db.count == 0);
 }
 
+/* stop() hands the name to pkill/taskkill as an argv element, so a leading
+ * '-' would be read as an option: a package named "-u0" made
+ * `pkill -f -u0` signal every process owned by root. */
+TEST(test_install_refuses_a_leading_dash)
+{
+    static const char *bad[] = { "-u0", "-9", "--help", "-" };
+    eapp_db_t db;
+    fresh_db(&db);
+    for (size_t i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
+        write_eapp_with_strings(bad[i], GOOD_ID);
+        ASSERT(eos_pkg_install(&db, EAPP_PATH) != 0);
+        ASSERT(db.count == 0);
+        write_eapp_with_strings("payload", bad[i]);
+        ASSERT(eos_pkg_install(&db, EAPP_PATH) != 0);
+        ASSERT(db.count == 0);
+    }
+    /* a dash anywhere else is still a plain name character */
+    write_eapp_with_strings("pay-load", "com.example.my-app");
+    ASSERT(eos_pkg_install(&db, EAPP_PATH) == 0);
+    ASSERT(db.count == 1);
+}
+
 /* install_path is later handed to `rm -rf "..."` through system(), so the
  * characters a shell reads are refused with the separators. */
 TEST(test_install_refuses_shell_metacharacters_in_package_id)
@@ -465,6 +487,7 @@ int main(void)
     run_test_install_refuses_a_name_with_a_path_separator();
     run_test_install_refuses_dot_and_dotdot();
     run_test_install_refuses_shell_metacharacters_in_package_id();
+    run_test_install_refuses_a_leading_dash();
     run_test_unterminated_name_fields_are_refused();
     run_test_empty_name_fields_are_refused();
     run_test_update_refuses_a_bad_package_id_before_looking_it_up();

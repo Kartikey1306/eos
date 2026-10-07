@@ -205,7 +205,9 @@ static int eos_rmdir_recursive(const char *path)
  * name to pkill as an argv element, so no field reaches a shell at all.
  *
  * Each field is a single path component: terminated, non-empty, made of
- * [A-Za-z0-9._-] only, and not "." or "..". Nothing else is a name. The
+ * [A-Za-z0-9._-] only, not "." or "..", and not starting with '-'. A
+ * leading '-' would reach pkill/taskkill as an option ("-u0" makes
+ * `pkill -f -u0` signal every root process). Nothing else is a name. The
  * rule is applied where a header is read (verify, install, update) and
  * where a db record is read (load_db), so a record an earlier version
  * wrote from an unvalidated header is dropped rather than acted on.
@@ -216,6 +218,7 @@ static bool eos_pkg_field_is_component(const char *field, size_t field_sz)
     while (n < field_sz && field[n] != '\0') n++;
     if (n == 0 || n == field_sz) return false;            /* empty, or unterminated */
     if (field[0] == '.' && (n == 1 || (n == 2 && field[1] == '.'))) return false;
+    if (field[0] == '-') return false;                    /* would parse as an option */
     for (size_t i = 0; i < n; i++) {
         unsigned char c = (unsigned char)field[i];
         bool ok = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') ||
@@ -1304,7 +1307,7 @@ int eos_pkg_stop(const eapp_db_t *db, const char *package_id)
 
 #elif defined(__linux__) || defined(__APPLE__) || defined(__unix__)
     {
-        char *const argv[] = { "pkill", "-f", pkg->name, NULL };
+        char *const argv[] = { "pkill", "-f", "--", pkg->name, NULL };
         pid_t pid;
         int status;
         if (posix_spawnp(&pid, argv[0], NULL, NULL, argv, environ) == 0)
