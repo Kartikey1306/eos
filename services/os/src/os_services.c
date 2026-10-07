@@ -124,10 +124,76 @@ static int url_is_fetchable(const char *url) {
     return 1;
 }
 
+/* Quote one argument so the Microsoft C runtime parses it back unchanged.
+ *
+ * _spawnvp() does not quote: it joins argv with single spaces into one
+ * command line, and the child's runtime splits that line again. A download
+ * path under %TEMP% such as `C:\Users\First Last\...` therefore reached
+ * curl as two arguments. This applies the inverse of the CRT's parsing
+ * rules: an argument with no space, tab, newline, vertical tab or double
+ * quote is left alone; otherwise it is wrapped in double quotes, a quote is
+ * written as \", and the backslashes in front of a quote or of the closing
+ * quote are doubled. Plain C so it is unit-tested on every host.
+ *
+ * Writes at most out_sz bytes including the terminator. Returns 0, or -1 if
+ * in or out is NULL or the result does not fit. */
+int eos_os_quote_win_arg(const char *in, char *out, size_t out_sz);
+int eos_os_quote_win_arg(const char *in, char *out, size_t out_sz) {
+    size_t o = 0;
+    const char *p;
+    if (!in || !out || out_sz == 0) return -1;
+#define EOS_QPUT(c) do { if (o + 1 >= out_sz) return -1; out[o++] = (char)(c); } while (0)
+    if (in[0] != '\0' && !strpbrk(in, " \t\n\v\"")) {
+        size_t n = strlen(in);
+        if (n + 1 > out_sz) return -1;
+        memcpy(out, in, n + 1);
+        return 0;
+    }
+    EOS_QPUT('"');
+    for (p = in; ; p++) {
+        size_t slashes = 0;
+        while (*p == '\\') { slashes++; p++; }
+        if (*p == '\0') {
+            while (slashes--) { EOS_QPUT('\\'); EOS_QPUT('\\'); }
+            break;
+        }
+        if (*p == '"') {
+            while (slashes--) { EOS_QPUT('\\'); EOS_QPUT('\\'); }
+            EOS_QPUT('\\');
+        } else {
+            while (slashes--) EOS_QPUT('\\');
+        }
+        EOS_QPUT(*p);
+    }
+    EOS_QPUT('"');
+#undef EOS_QPUT
+    out[o] = '\0';
+    return 0;
+}
+
 /* Run argv[0] with argv, no shell in between. 0 when it exited 0. */
 static int run_argv(char *const argv[]) {
 #ifdef _WIN32
-    intptr_t rc = _spawnvp(_P_WAIT, argv[0], (const char *const *)argv);
+    /* _spawnvp() joins argv unquoted (see eos_os_quote_win_arg), so every
+     * element is quoted first. 8 slots covers every caller in this file. */
+    enum { MAX_ARGS = 8 };
+    char *quoted[MAX_ARGS + 1];
+    size_t n = 0, i;
+    intptr_t rc = -1;
+    for (; argv[n]; n++) {
+        size_t cap;
+        if (n == MAX_ARGS) goto out;
+        cap = 2 * strlen(argv[n]) + 3;
+        quoted[n] = (char *)malloc(cap);
+        if (!quoted[n] || eos_os_quote_win_arg(argv[n], quoted[n], cap) != 0) {
+            free(quoted[n]);
+            goto out;
+        }
+    }
+    quoted[n] = NULL;
+    rc = _spawnvp(_P_WAIT, argv[0], (const char *const *)quoted);
+out:
+    for (i = 0; i < n; i++) free(quoted[i]);
     return (rc == 0) ? 0 : -1;
 #else
     pid_t pid;

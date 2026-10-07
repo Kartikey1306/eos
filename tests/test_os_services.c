@@ -23,6 +23,7 @@ static int tests_passed = 0;
 #define TEST(name) \
     static void name(void); \
     static void run_##name(void) { \
+        tests_run++; \
         printf("  %-50s ", #name); \
         name(); \
         tests_passed++; \
@@ -310,6 +311,60 @@ TEST(test_ota_install_refuses_a_missing_source_or_target) {
     ASSERT(eos_ota_install(&ota, "") == -1);
 }
 
+/* Windows: run_argv() quotes each element for _spawnvp(), which joins argv
+ * unquoted. The quoting is plain C, so it is checked here on every host. */
+int eos_os_quote_win_arg(const char *in, char *out, size_t out_sz);
+
+/* The Microsoft C runtime's rule for reading one argument back. */
+static int crt_parse_one(const char *s, char *out, size_t out_sz, const char **end) {
+    size_t o = 0;
+    int inq = 0;
+    while (*s) {
+        size_t bs = 0;
+        while (*s == '\\') { bs++; s++; }
+        if (*s == '"') {
+            size_t k;
+            for (k = 0; k < bs / 2; k++) { if (o + 1 >= out_sz) return -1; out[o++] = '\\'; }
+            if (bs % 2) { if (o + 1 >= out_sz) return -1; out[o++] = '"'; }
+            else inq = !inq;
+            s++;
+            continue;
+        }
+        while (bs--) { if (o + 1 >= out_sz) return -1; out[o++] = '\\'; }
+        if (*s == '\0') break;
+        if (!inq && (*s == ' ' || *s == '\t')) break;
+        if (o + 1 >= out_sz) return -1;
+        out[o++] = *s++;
+    }
+    out[o] = '\0';
+    *end = s;
+    return 0;
+}
+
+TEST(test_win_arg_quoting_round_trips) {
+    static const char *cases[] = {
+        "curl", "-fSL", "", "C:\\Users\\First Last\\AppData\\Local\\Temp\\eos_ota_update.bin",
+        "a\"b", "a\\\"b", "x y\\", "x y\\\\", "\\\\server\\share\\", "tab\there",
+        "\"", "\\", " ", "https://example.com/a?b=c&d=e",
+    };
+    char q[256], back[256];
+    const char *end;
+    size_t i;
+    for (i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        ASSERT(eos_os_quote_win_arg(cases[i], q, sizeof(q)) == 0);
+        ASSERT(crt_parse_one(q, back, sizeof(back), &end) == 0);
+        ASSERT(*end == '\0');                  /* one argument, all consumed */
+        ASSERT(strcmp(back, cases[i]) == 0);
+    }
+    ASSERT(eos_os_quote_win_arg("plain", q, sizeof(q)) == 0 && strcmp(q, "plain") == 0);
+    ASSERT(eos_os_quote_win_arg("a b", q, sizeof(q)) == 0 && strcmp(q, "\"a b\"") == 0);
+    ASSERT(eos_os_quote_win_arg("x y\\", q, sizeof(q)) == 0 && strcmp(q, "\"x y\\\\\"") == 0);
+    ASSERT(eos_os_quote_win_arg("a\"b", q, sizeof(q)) == 0 && strcmp(q, "\"a\\\"b\"") == 0);
+    ASSERT(eos_os_quote_win_arg("a b", q, 5) == -1);   /* needs 6 */
+    ASSERT(eos_os_quote_win_arg("a b", q, 6) == 0);
+    ASSERT(eos_os_quote_win_arg(NULL, q, sizeof(q)) == -1);
+}
+
 int main(void) {
     printf("=== EoS: OS Services Unit Tests ===\n\n");
     run_test_watchdog_init();
@@ -328,7 +383,7 @@ int main(void) {
     run_test_ota_url_check_accepts_url_characters();
     run_test_ota_install_copies_the_file_and_runs_nothing();
     run_test_ota_install_refuses_a_missing_source_or_target();
-    tests_run = 16;
+    run_test_win_arg_quoting_round_trips();
     printf("\n%d/%d tests passed\n", tests_passed, tests_run);
     return (tests_passed == tests_run) ? 0 : 1;
 }
