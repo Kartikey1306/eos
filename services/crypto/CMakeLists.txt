@@ -4,6 +4,7 @@ add_library(eos_crypto STATIC
     src/aes.c
     src/rsa_ecc_sha512.c
     src/ed25519_verify.c
+    src/ed25519_sign.c
     src/ed25519_ge.c
     src/ed25519_sc.c
     src/ed25519_fe.c

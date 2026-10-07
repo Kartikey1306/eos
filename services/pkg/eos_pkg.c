@@ -200,17 +200,81 @@ const uint8_t *eos_pkg_trust_anchor(void)
     return NULL;
 }
 
+/* --------------------------------------------------------------------------
+ * The v2 signature envelope (#162).
+ *
+ * Version 1 signed the binary payload alone, so every other header field --
+ * capabilities, the version triple, name, package_id, the arch list, the
+ * resources offset/size -- and the resources blob itself were unsigned and
+ * rewritable on a genuinely signed package. A re-labelled old binary could
+ * present as an upgrade; a signed binary could be installed as another
+ * package's id and replace it through update.
+ *
+ * Version 2 signs one digest over the whole envelope: the header with the
+ * signature field zeroed, then the binary, then the resources blob. The
+ * producer computes the same digest and signs it with Ed25519. Signing the
+ * digest rather than the raw concatenation keeps the signed message at 32
+ * bytes and lets the digest stream, so large payloads never need a second
+ * in-memory copy.
+ * -------------------------------------------------------------------------- */
+void eos_pkg_envelope_digest(const eapp_header_t *hdr,
+                             const uint8_t *binary_data, uint32_t binary_size,
+                             const uint8_t *res_data, uint32_t res_size,
+                             uint8_t digest[EAPP_HASH_LEN])
+{
+    eapp_header_t h;
+    EosSha256 sha;
+
+    memcpy(&h, hdr, sizeof(h));
+    memset(h.signature, 0, EAPP_SIGNATURE_LEN);
+
+    eos_sha256_init(&sha);
+    eos_sha256_update(&sha, (const uint8_t *)&h, sizeof(h));
+    if (binary_data && binary_size > 0)
+        eos_sha256_update(&sha, binary_data, binary_size);
+    if (res_data && res_size > 0)
+        eos_sha256_update(&sha, res_data, res_size);
+    eos_sha256_final(&sha, digest);
+}
+
+/* Read a blob from the package file for the signature check. Returns the
+ * malloc'd blob, or NULL when the blob is absent (size or offset 0) or
+ * unreadable. The caller frees a non-NULL return. A declared-but-unreadable
+ * blob yields NULL, which the envelope digest treats as absent -- and the
+ * signature then fails to match, so verification stays fail-closed. */
+static uint8_t *eos_pkg_read_blob(FILE *f, uint32_t offset, uint32_t size)
+{
+    uint8_t *data;
+
+    if (size == 0 || offset == 0) return NULL;
+    if (fseek(f, (long)offset, SEEK_SET) != 0) return NULL;
+    data = (uint8_t *)malloc(size);
+    if (!data) return NULL;
+    if (fread(data, 1, size, f) != size) {
+        free(data);
+        return NULL;
+    }
+    return data;
+}
+
 /* Check a package signature against the configured anchor.
  *
  * Returns 0 when the signature is good, -1 otherwise. The three failures are
  * reported apart because they call for different actions: fix the
  * provisioning, fix the build, or reject the package.
+ *
+ * The signature is Ed25519 over the v2 envelope digest
+ * (eos_pkg_envelope_digest): the header with the signature field zeroed,
+ * then the binary, then the resources blob.
  */
-static int eos_pkg_check_signature(const uint8_t signature[EAPP_SIGNATURE_LEN],
+static int eos_pkg_check_signature(const eapp_header_t *hdr,
                                    const uint8_t *binary_data,
-                                   uint32_t binary_size)
+                                   uint32_t binary_size,
+                                   const uint8_t *res_data,
+                                   uint32_t res_size)
 {
     const uint8_t *anchor = eos_pkg_trust_anchor();
+    uint8_t digest[EAPP_HASH_LEN];
 
     if (!anchor) {
 #ifdef EOS_ALLOW_UNSIGNED_PKG
@@ -218,7 +282,8 @@ static int eos_pkg_check_signature(const uint8_t signature[EAPP_SIGNATURE_LEN],
                 "eos-pkg: WARNING: no trust anchor configured and this build "
                 "defines EOS_ALLOW_UNSIGNED_PKG; the package is NOT "
                 "authenticated\n");
-        (void)signature; (void)binary_data; (void)binary_size;
+        (void)hdr; (void)binary_data; (void)binary_size;
+        (void)res_data; (void)res_size;
         return 0;
 #else
         fprintf(stderr,
@@ -232,7 +297,9 @@ static int eos_pkg_check_signature(const uint8_t signature[EAPP_SIGNATURE_LEN],
 #endif
     }
 
-    if (!ed25519_verify(signature, binary_data, binary_size, anchor)) {
+    eos_pkg_envelope_digest(hdr, binary_data, binary_size,
+                            res_data, res_size, digest);
+    if (!ed25519_verify(hdr->signature, digest, EAPP_HASH_LEN, anchor)) {
         fprintf(stderr, "eos-pkg: signature verification failed\n");
         return -1;
     }
@@ -517,12 +584,20 @@ int eos_pkg_verify(const char *eapp_path)
         return -1;
     }
 
-    if (eos_pkg_check_signature(hdr.signature, binary_data, hdr.binary_size) != 0) {
+    /* The signature covers the envelope, so the resources blob must be read
+     * for the check even though verify prints nothing about it. */
+    uint8_t *res_data = eos_pkg_read_blob(f, hdr.resources_offset,
+                                          hdr.resources_size);
+
+    if (eos_pkg_check_signature(&hdr, binary_data, hdr.binary_size,
+                                res_data, hdr.resources_size) != 0) {
+        free(res_data);
         free(binary_data);
         fclose(f);
         return -1;
     }
 
+    free(res_data);
     free(binary_data);
     fclose(f);
 
@@ -533,7 +608,7 @@ int eos_pkg_verify(const char *eapp_path)
     printf("  Archs:   %u\n", hdr.arch_count);
     printf("  Binary:  %u bytes at offset %u\n", hdr.binary_size, hdr.binary_offset);
     printf("  Hash:    OK (SHA-256)\n");
-    printf("  Sig:     OK (Ed25519)\n");
+    printf("  Sig:     OK (Ed25519 over v2 envelope)\n");
 
     return 0;
 }
@@ -629,9 +704,19 @@ int eos_pkg_install(eapp_db_t *db, const char *eapp_path)
         return -1;
     }
 
-    if (eos_pkg_check_signature(hdr.signature, binary_data, hdr.binary_size) != 0) {
+    /* The signature covers the envelope: header (signature zeroed), binary,
+     * resources. Read the resources now; a declared-but-unreadable blob
+     * yields NULL, which the digest treats as absent and the signature then
+     * fails to match -- fail-closed. The package file is not needed after
+     * this point. */
+    uint8_t *res_data = eos_pkg_read_blob(f, hdr.resources_offset,
+                                          hdr.resources_size);
+    fclose(f);
+
+    if (eos_pkg_check_signature(&hdr, binary_data, hdr.binary_size,
+                                res_data, hdr.resources_size) != 0) {
+        free(res_data);
         free(binary_data);
-        fclose(f);
         return -1;
     }
 
@@ -674,31 +759,26 @@ int eos_pkg_install(eapp_db_t *db, const char *eapp_path)
     chmod(binary_path, 0755);
 #endif
 
-    if (hdr.resources_size > 0 && hdr.resources_offset > 0) {
+    /* res_data was read (and signature-checked) above; reuse it instead of
+     * re-reading from the package file. */
+    if (res_data) {
         char res_path[EAPP_MAX_PATH];
         snprintf(res_path, EAPP_MAX_PATH, "%s%cresources", install_dir, EOS_PATH_SEP);
         eos_mkdir_recursive(res_path);
 
-        if (fseek(f, hdr.resources_offset, SEEK_SET) == 0) {
-            uint8_t *res_data = (uint8_t *)malloc(hdr.resources_size);
-            if (res_data) {
-                if (fread(res_data, 1, hdr.resources_size, f) == hdr.resources_size) {
-                    char res_file[EAPP_MAX_PATH];
-                    snprintf(res_file, EAPP_MAX_PATH, "%s%cdata.bin",
-                             res_path, EOS_PATH_SEP);
-                    FILE *fres = fopen(res_file, "wb");
-                    if (fres) {
-                        fwrite(res_data, 1, hdr.resources_size, fres);
-                        fclose(fres);
-                    }
-                }
-                free(res_data);
-            }
+        char res_file[EAPP_MAX_PATH];
+        snprintf(res_file, EAPP_MAX_PATH, "%s%cdata.bin",
+                 res_path, EOS_PATH_SEP);
+        FILE *fres = fopen(res_file, "wb");
+        if (fres) {
+            if (fwrite(res_data, 1, hdr.resources_size, fres) != hdr.resources_size)
+                fprintf(stderr, "eos-pkg: warning -- short write on resources\n");
+            fclose(fres);
         }
     }
 
+    free(res_data);
     free(binary_data);
-    fclose(f);
 
     eapp_package_t *pkg = &db->packages[db->count];
     memset(pkg, 0, sizeof(eapp_package_t));

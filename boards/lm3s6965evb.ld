@@ -19,6 +19,8 @@ SECTIONS
     _sidata = LOADADDR(.data);
     .data : { . = ALIGN(4); _sdata = .; *(.data) *(.data*) . = ALIGN(4); _edata = .; } >RAM AT> FLASH
     .bss : { . = ALIGN(4); _sbss = .; __bss_start__ = _sbss; *(.bss) *(.bss*) *(COMMON) . = ALIGN(4); _ebss = .; __bss_end__ = _ebss; } >RAM
-    ._heap : { . = ALIGN(8); __heap_start = .; . = . + _Min_Heap_Size; __heap_end = .; } >RAM
+    /* newlib's _sbrk (malloc, and printf through it) grows the heap from
+     * `end`. Without the symbol any image that prints fails to link. */
+    ._heap : { . = ALIGN(8); __heap_start = .; PROVIDE(end = .); PROVIDE(_end = .); . = . + _Min_Heap_Size; __heap_end = .; } >RAM
     ._stack : { . = ALIGN(8); . = . + _Min_Stack_Size; } >RAM
 }

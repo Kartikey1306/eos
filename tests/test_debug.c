@@ -177,6 +177,156 @@ static void test_gdb_query_roundtrip(void) {
     printf("[PASS] gdb qSupported round-trip\n");
 }
 
+/* The stub advertises PacketSize in its qSupported reply, and GDB sends
+ * packets up to that size. A packet the stub cannot hold must not desync
+ * the stream: it is answered with '-' and the next packet still parses.
+ * And a packet exactly as long as advertised must be accepted. */
+static unsigned advertised_packet_size(void) {
+    gdb_reset();
+    gdb_push("qSupported");
+    gdb_push("D");
+    gdb_run();
+    const char *p = strstr(gdb_tx, "PacketSize=");
+    assert(p != NULL);
+    unsigned size = 0;
+    assert(sscanf(p + strlen("PacketSize="), "%x", &size) == 1);
+    return size;
+}
+
+/* The first thing the stub writes is the stop reply "$S05#xx"; the byte
+ * after it is the ack ('+' or '-') for the first scripted packet. */
+static char first_ack(void) {
+    const char *hash = strchr(gdb_tx, '#');
+    assert(hash != NULL && strlen(hash) >= 4);
+    return hash[3];
+}
+
+static void test_gdb_packet_of_the_advertised_size_is_accepted(void) {
+    unsigned size = advertised_packet_size();
+    assert(size >= 64 && size < GDB_RX_CAP - 8);
+
+    char body[GDB_RX_CAP];
+    memset(body, 'x', size);
+    body[0] = 'q';                /* an unknown query: the reply is empty */
+    body[size] = '\0';
+
+    gdb_reset();
+    gdb_push(body);
+    gdb_push("D");
+    gdb_run();
+    /* '+' acknowledges the long packet, "$#00" is the empty reply to an
+     * unknown query, and D is then handled normally. */
+    assert(first_ack() == '+');
+    assert(tx_has("$#00"));
+    assert(tx_has("$OK#"));
+    printf("[PASS] gdb packet of the advertised size is accepted\n");
+}
+
+static void test_gdb_packet_longer_than_advertised_does_not_desync(void) {
+    unsigned size = advertised_packet_size();
+
+    char body[GDB_RX_CAP];
+    memset(body, 'x', size + 40);
+    body[0] = 'q';
+    body[size + 40] = '\0';
+
+    gdb_reset();
+    gdb_push(body);
+    gdb_push("D");
+    gdb_run();
+    /* The oversized packet is refused with '-', nothing of it is answered,
+     * and the D that follows still gets its OK: the stream stayed in sync. */
+    assert(first_ack() == '-');
+    assert(!tx_has("$#00"));
+    assert(tx_has("$OK#"));
+    printf("[PASS] gdb packet longer than advertised does not desync\n");
+}
+
+/* A packet whose checksum does not match is answered with '-', and GDB
+ * resends it. The session must still be there to receive the resend: it
+ * used to end on the first corrupt packet, because the dispatch loop read
+ * every negative result from recv_packet() as a dead transport. */
+static void test_gdb_corrupt_checksum_is_nacked_and_the_session_continues(void) {
+    gdb_reset();
+    const char *bad = "$qAttached#00";       /* real checksum is not 00 */
+    memcpy(gdb_rx, bad, strlen(bad));
+    gdb_rx_len = strlen(bad);
+    gdb_push("D");
+    gdb_run();
+    assert(first_ack() == '-');
+    assert(!tx_has("$1#"));                  /* the refused query got no reply */
+    assert(tx_has("$OK#"));                  /* D still handled */
+    printf("[PASS] gdb corrupt checksum is NACKed and the session continues\n");
+}
+
+/* A peer that keeps sending body bytes and never a '#' must not hold the
+ * exception handler forever. The read below hands out 'x' until a cap and
+ * only then reports the transport gone; the stub is expected to give up on
+ * the body long before that, saying so with a '-'. The unbounded loop this
+ * pins against read every byte to the cap and wrote nothing. */
+#define ENDLESS_CAP 20000
+static size_t endless_reads;
+static size_t reads_at_first_write;
+
+static int mock_read_endless(void *ctx, uint8_t *buf, int len) {
+    (void)ctx;
+    int n = 0;
+    while (n < len && endless_reads < ENDLESS_CAP) {
+        buf[n++] = (endless_reads == 0) ? '$' : 'x';
+        endless_reads++;
+    }
+    return n;
+}
+
+/* The stop reply ($S05#..) goes out before anything is read; the write to
+ * time is the first ack byte, which is the stub's verdict on the body. */
+static int mock_write_first(void *ctx, const uint8_t *buf, int len) {
+    if (reads_at_first_write == 0 && len == 1 && (buf[0] == '-' || buf[0] == '+'))
+        reads_at_first_write = endless_reads;
+    return mock_write(ctx, buf, len);
+}
+
+static void test_gdb_body_that_never_ends_is_abandoned(void) {
+    gdb_reset();
+    endless_reads = 0;
+    reads_at_first_write = 0;
+    EosGdbStub stub;
+    EosGdbIO io = { mock_read_endless, mock_write_first, NULL };
+    eos_gdb_init(&stub, EOS_GDB_TRANSPORT_TCP);
+    eos_gdb_set_io(&stub, &io);
+    eos_gdb_start(&stub, 0);
+    eos_gdb_handle_exception(&stub, 5);          /* returns: the cap ends the transport */
+
+    assert(reads_at_first_write > 0);            /* an ack was written before the cap at all */
+    char verdict = first_ack();                  /* the ack after the stop reply */
+    unsigned size = advertised_packet_size();    /* separate scripted session */
+    assert(reads_at_first_write <= 2u * size + 8u);  /* ... after at most the buffer plus one more body's worth */
+    assert(verdict == '-');                      /* and it was a refusal */
+    printf("[PASS] gdb body that never ends is abandoned with a NACK\n");
+}
+
+/* The advertised PacketSize is what GDB sizes an M transfer from, so the
+ * memory cap has to be derived from it (tests/unit/test_gdb_stub_limits.py
+ * pins the derivation in the source). The accept path cannot run here --
+ * the memory hooks dereference the 32-bit address on a 64-bit host, as the
+ * note at the top of this file says -- so this pins the boundary from the
+ * refusing side: one byte more than the packet can carry is E01, and the
+ * cap is where the packet size says it is, not at the old literal 128. */
+static void test_gdb_memory_transfer_one_past_the_cap_is_refused(void) {
+    unsigned size = advertised_packet_size();
+    unsigned cap = (size - 15) / 2;              /* "M<addr>,<len>:" is at most 15 chars */
+    assert(cap > 128);                           /* the old literal cap, well below what the packet carries */
+    char body[64];
+    gdb_reset();
+    snprintf(body, sizeof(body), "M0,%x:aabb", cap + 1);
+    gdb_push(body);
+    gdb_push("D");
+    gdb_run();
+    assert(first_ack() == '+');                  /* well-formed packet ... */
+    assert(tx_has("E01"));                       /* ... refused by the cap */
+    printf("[PASS] gdb memory transfer one past the cap is refused\n");
+}
+
 static void test_coredump_init(void) {
     assert(eos_coredump_init(EOS_DUMP_TARGET_RAM) == 0);
     assert(!eos_coredump_exists());
@@ -233,6 +383,11 @@ int main(void) {
     test_gdb_write_mem_non_hex_payload();
     test_gdb_write_mem_oversized_len();
     test_gdb_query_roundtrip();
+    test_gdb_packet_of_the_advertised_size_is_accepted();
+    test_gdb_packet_longer_than_advertised_does_not_desync();
+    test_gdb_corrupt_checksum_is_nacked_and_the_session_continues();
+    test_gdb_body_that_never_ends_is_abandoned();
+    test_gdb_memory_transfer_one_past_the_cap_is_refused();
     test_coredump_init();
     test_coredump_capture();
     test_coredump_clear();

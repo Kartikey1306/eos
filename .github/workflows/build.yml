@@ -170,6 +170,29 @@ jobs:
             exit 1
           fi
 
+      # main_system_test never starts the scheduler, so it cannot catch a
+      # broken context switch. This test starts the kernel, and its tasks only
+      # make progress through SysTick and PendSV. QEMU's exit status is the
+      # guest's exit() status, so 0 means it passed and anything else fails.
+      - name: Scheduler on QEMU (sim/qemu_cortex_m3)
+        run: |
+          python3 -m pip install --quiet pyyaml
+          sim/qemu_cortex_m3/build.sh _build_qemu/scheduler.elf sim/qemu_cortex_m3/scheduler_test.c
+          timeout 30 qemu-system-arm -M lm3s6965evb -nographic -semihosting \
+            -kernel _build_qemu/scheduler.elf
+
+      # The Cortex-M3 target has no FPU, so PendSV's FPU half (s16-s31 lazy
+      # stacking, used by every Cortex-M4F board) is compiled out there. This
+      # runs it: the test fails if any task's s16-s31 change across a switch.
+      - name: FPU context switch on QEMU (sim/qemu_cortex_m33)
+        run: |
+          sim/qemu_cortex_m33/build.sh _build_qemu/fpu.elf sim/qemu_cortex_m33/fpu_context_test.c
+          timeout 30 qemu-system-arm -M mps2-an505 -nographic -semihosting \
+            -kernel _build_qemu/fpu.elf
+          sim/qemu_cortex_m33/build.sh _build_qemu/scheduler_m33.elf sim/qemu_cortex_m3/scheduler_test.c
+          timeout 30 qemu-system-arm -M mps2-an505 -nographic -semihosting \
+            -kernel _build_qemu/scheduler_m33.elf
+
   # ── Required check ────────────────────────────────────────────────────────
   # See https://github.com/embeddedos-org/.github/blob/master/STANDARDS.md --
   # the org-wide file, not a local one; there is no .github/STANDARDS.md in

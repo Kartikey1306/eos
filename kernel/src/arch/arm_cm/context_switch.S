@@ -10,8 +10,20 @@
  */
 
     .syntax unified
-    .cpu    cortex-m4
     .thumb
+
+/*
+ * The core comes from -mcpu (cortex-m3, cortex-m4, ...), not from a .cpu
+ * directive: hard-coding cortex-m4 here made every Cortex-M3 build fail.
+ *
+ * The lazy-stacked FPU registers exist only when the code is built for an
+ * FPU. A build without one (Cortex-M3, or -mfloat-abi=soft) never sets
+ * EXC_RETURN bit 4 to 0, so it has nothing to save, and the assembler would
+ * reject the VFP instructions anyway.
+ */
+#if defined(__ARM_FP) && !defined(EOS_NO_FPU)
+#define EOS_CTX_SAVE_FPU 1
+#endif
 
     .extern g_current_sp     /* uint32_t *g_current_sp — current task's SP slot */
     .extern g_next_sp        /* uint32_t *g_next_sp — next task's SP slot */
@@ -34,9 +46,11 @@ PendSV_Handler:
 
     /* ---- Save current context ---- */
     mrs     r0, psp             /* R0 = current task's PSP */
+#ifdef EOS_CTX_SAVE_FPU
     tst     lr, #0x10           /* Check if FPU context is active (bit 4 of EXC_RETURN) */
     it      eq
     vstmdbeq r0!, {s16-s31}     /* Save upper FPU regs if FPU was used */
+#endif
     stmdb   r0!, {r4-r11, lr}   /* Push R4-R11 and LR (EXC_RETURN) */
 
     /* Store the updated SP into the current task's TCB */
@@ -55,9 +69,11 @@ PendSV_Handler:
     ldr     r0, [r1]            /* R0 = next task's saved PSP */
 
     ldmia   r0!, {r4-r11, lr}   /* Pop R4-R11 and LR (EXC_RETURN) */
+#ifdef EOS_CTX_SAVE_FPU
     tst     lr, #0x10
     it      eq
     vldmiaeq r0!, {s16-s31}     /* Restore upper FPU regs if needed */
+#endif
     msr     psp, r0             /* Set PSP to next task's stack */
 
     /* Enable interrupts and return */

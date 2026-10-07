@@ -132,7 +132,7 @@ git clone https://github.com/embeddedos-org/eos.git
 cd eos/examples/blink-gpio
 
 # Host build uses Linux HAL backend (simulated GPIO via sysfs/printf)
-cmake -B build -DEOS_PRODUCT=iot -DEOS_BUILD_TESTS=ON
+cmake -B build -DEOS_BUILD_TESTS=ON
 cmake --build build
 ```
 
@@ -246,7 +246,7 @@ Once your application works, add secure boot with eboot:
 ### 1. Build eboot for your board
 ```bash
 cd EoS/eboot
-cmake -B build -DEBLDR_BOARD=nrf52
+cmake -B build -DEBLDR_BOARD=nrf52 -DCMAKE_BUILD_TYPE=Debug
 cmake --build build
 ```
 

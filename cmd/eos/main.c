@@ -17,6 +17,7 @@
 #include "eos/package.h"
 #include "eos/toolchain.h"
 #include "eos/system.h"
+#include "exec_argv.h"
 
 #define EOS_VERSION "0.2.0"
 #define DEFAULT_CONFIG "eos.yaml"
@@ -545,6 +546,65 @@ static int cmd_add(const CliArgs *args) {
     return 0;
 }
 
+#ifdef _WIN32
+#include <windows.h>
+/* Recursively remove a directory tree without a shell. Returns 0 on
+   success (or if the path did not exist), -1 on failure.
+
+   Reparse points (junctions, directory symlinks, mount points) are removed
+   as links and never descended into: following one would delete whatever
+   it points at, outside the tree being cleaned (issue #178). A child path
+   that does not fit in MAX_PATH is an error rather than a truncated name,
+   because a truncated name can denote a different, existing file. */
+static int eos_rmtree_win32(const char *path) {
+    DWORD top = GetFileAttributesA(path);
+    if (top == INVALID_FILE_ATTRIBUTES) {
+        DWORD e = GetLastError();
+        return (e == ERROR_FILE_NOT_FOUND || e == ERROR_PATH_NOT_FOUND) ? 0 : -1;
+    }
+    if (top & FILE_ATTRIBUTE_REPARSE_POINT) {
+        /* build_dir itself is a link: remove the link, not its target. */
+        if (top & FILE_ATTRIBUTE_DIRECTORY)
+            return RemoveDirectoryA(path) ? 0 : -1;
+        return DeleteFileA(path) ? 0 : -1;
+    }
+    char search[MAX_PATH];
+    int n = snprintf(search, sizeof(search), "%s\\*", path);
+    if (n < 0 || (size_t)n >= sizeof(search)) return -1;
+    WIN32_FIND_DATAA fd;
+    HANDLE h = FindFirstFileA(search, &fd);
+    if (h == INVALID_HANDLE_VALUE) {
+        DWORD e = GetLastError();
+        return (e == ERROR_FILE_NOT_FOUND || e == ERROR_PATH_NOT_FOUND) ? 0 : -1;
+    }
+    int rc = 0;
+    do {
+        if (strcmp(fd.cFileName, ".") == 0 || strcmp(fd.cFileName, "..") == 0)
+            continue;
+        char child[MAX_PATH];
+        n = snprintf(child, sizeof(child), "%s\\%s", path, fd.cFileName);
+        if (n < 0 || (size_t)n >= sizeof(child)) { rc = -1; continue; }
+        DWORD attrs = fd.dwFileAttributes;
+        if (attrs & FILE_ATTRIBUTE_REPARSE_POINT) {
+            /* A junction or symlink: unlink it, never recurse through it. */
+            SetFileAttributesA(child, attrs & ~(DWORD)FILE_ATTRIBUTE_READONLY);
+            BOOL ok = (attrs & FILE_ATTRIBUTE_DIRECTORY) ? RemoveDirectoryA(child)
+                                                         : DeleteFileA(child);
+            if (!ok) rc = -1;
+        } else if (attrs & FILE_ATTRIBUTE_DIRECTORY) {
+            if (eos_rmtree_win32(child) != 0) rc = -1;
+        } else {
+            /* Clear read-only so deletion cannot fail on it. */
+            SetFileAttributesA(child, FILE_ATTRIBUTE_NORMAL);
+            if (!DeleteFileA(child)) rc = -1;
+        }
+    } while (FindNextFileA(h, &fd));
+    FindClose(h);
+    if (rc == 0 && !RemoveDirectoryA(path)) rc = -1;
+    return rc;
+}
+#endif
+
 static int cmd_clean(const CliArgs *args) {
     static EosConfig cfg;
     EosResult res = eos_config_load(&cfg, args->config_path);
@@ -561,19 +621,18 @@ static int cmd_clean(const CliArgs *args) {
         return 0;
     }
 
-    /* Validate build_dir to prevent command injection */
-    if (strpbrk(build_dir, ";|&><$()\"'")) {
-        EOS_ERROR("Invalid build directory path: %s (contains special characters)", build_dir);
-        return 1;
-    }
-
-    char cmd[1024];
+    /* Run without a shell (issue #172): argv-form execution passes
+       build_dir verbatim, so backticks, $(), ;, | and friends are inert.
+       The "--" ends rm's option parsing so a leading-dash path cannot be
+       mistaken for flags. */
 #ifdef _WIN32
-    snprintf(cmd, sizeof(cmd), "if exist \"%s\" rmdir /s /q \"%s\"", build_dir, build_dir);
+    /* No shell on Windows either: remove the tree in-process via Win32. */
+    int rc = eos_rmtree_win32(build_dir);
 #else
-    snprintf(cmd, sizeof(cmd), "rm -rf \"%s\"", build_dir);
+    char *const rm_argv[] = { "rm", "-rf", "--",
+                              (char *)build_dir, NULL };
+    int rc = eos_exec_argv("rm", rm_argv);
 #endif
-    int rc = system(cmd);
     if (rc == 0) {
         EOS_INFO("Clean complete");
     } else {

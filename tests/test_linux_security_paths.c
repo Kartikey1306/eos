@@ -19,6 +19,8 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
+#include <errno.h>
 
 static int failures;
 
@@ -36,8 +38,40 @@ static int failures;
     if (failures == (before)) printf("[PASS] %s\n", (msg)); \
 } while (0)
 
-/* Every environment dependency in this file is probed rather than assumed:
- * a missing build tool must print [SKIP], not count as a security failure. */
+/* Two kinds of "cannot run", kept apart on purpose.
+ *
+ * A missing or present optional tool -- make, evmctl, setfiles -- or a host
+ * that ignores file modes (root) means the case cannot be exercised here;
+ * that prints [SKIP] via have_tool() and the checks below, and is not a
+ * security failure.
+ *
+ * A temp directory this file cannot create is different: it is the harness
+ * failing, not an optional dependency missing. It used to print the same
+ * [SKIP] and return, so a read-only or full /tmp silently removed the
+ * assertion behind it from the run and the binary still exited 0. It now
+ * counts as a failure and stops the test. .ai/security.md: a verification
+ * step that cannot run must fail, not pass. */
+#define REQUIRE_TMPDIR(template) do { \
+    if (!mkdtemp(template)) { \
+        fprintf(stderr, "[FAIL] %s:%d: mkdtemp(%s): %s -- the harness could " \
+                "not create its fixture; the assertions after this did not run\n", \
+                __FILE__, __LINE__, #template, strerror(errno)); \
+        failures++; \
+        return; \
+    } \
+} while (0)
+
+/* Same rule for any other fixture step that fails: count it and say so. It
+ * does not return -- the cleanup differs per site -- so the caller must
+ * clean up and return itself; REQUIRE_TMPDIR above does return, because a
+ * directory that was never created needs no cleanup. */
+#define FIXTURE_FAILED(what) do { \
+    fprintf(stderr, "[FAIL] %s:%d: %s: %s -- the harness could not build its " \
+            "fixture; the assertions after this did not run\n", \
+            __FILE__, __LINE__, (what), strerror(errno)); \
+    failures++; \
+} while (0)
+
 static int have_tool(const char *tool) {
     char probe[128];
     snprintf(probe, sizeof probe, "command -v %s >/dev/null 2>&1", tool);
@@ -109,7 +143,7 @@ static void test_injection_does_not_execute(void) {
     EosDmVerity dv;
     EosIma ima;
 
-    if (!mkdtemp(dir)) { fprintf(stderr, "[SKIP] mkdtemp failed\n"); return; }
+    REQUIRE_TMPDIR(dir);
     snprintf(sentinel, sizeof sentinel, "%s/pwned", dir);
 
     /* A path carrying a command substitution that would create the sentinel. */
@@ -275,7 +309,7 @@ static void test_ordinary_paths_still_reach_the_shell(void) {
         printf("[SKIP] make is not installed; the counter-check cannot run\n");
         return;
     }
-    if (!mkdtemp(dir)) { fprintf(stderr, "[SKIP] mkdtemp failed\n"); return; }
+    REQUIRE_TMPDIR(dir);
     snprintf(mk, sizeof mk, "%s/Makefile", dir);
     snprintf(sentinel, sizeof sentinel, "%s/ran", dir);
     /* open(O_CREAT, 0600) rather than fopen("w"): fopen creates with 0666
@@ -329,7 +363,7 @@ static void test_the_default_source_dir_path_is_validated(void) {
      * shell while it expands the word, before it looks for the program. If
      * the guard lets the string through, the backtick runs whether or not
      * make exists. */
-    if (!mkdtemp(dir)) { fprintf(stderr, "[SKIP] mkdtemp failed\n"); return; }
+    REQUIRE_TMPDIR(dir);
     n = snprintf(sentinel, sizeof sentinel, "%s/pwned", dir);
     CHECK(n > 0 && (size_t)n < sizeof sentinel);
     n = snprintf(hostile_version, sizeof hostile_version,
@@ -376,7 +410,7 @@ static void test_ima_sign_reports_failure_when_evmctl_is_absent(void) {
     char target[320];
     int fd;
 
-    if (!mkdtemp(dir)) { fprintf(stderr, "[SKIP] mkdtemp failed\n"); return; }
+    REQUIRE_TMPDIR(dir);
     snprintf(target, sizeof target, "%s/file", dir);
 
     /* open(O_CREAT, 0600), not fopen("w") -- same reason as the Makefile
@@ -385,7 +419,10 @@ static void test_ima_sign_reports_failure_when_evmctl_is_absent(void) {
      * pointed at it. Third instance of this in the file; the first two were
      * fixed for exactly this. */
     fd = open(target, O_WRONLY | O_CREAT | O_EXCL, S_IRUSR | S_IWUSR);
-    if (fd >= 0) { (void)!write(fd, "x", 1); close(fd); }
+    CHECK(fd >= 0);
+    if (fd < 0) { rmdir(dir); return; }
+    CHECK(write(fd, "x", 1) == 1);
+    close(fd);
 
     eos_ima_init(&ima, EOS_IMA_ENFORCE);
     strncpy(ima.key_file, "/tmp/key.pub", sizeof(ima.key_file) - 1);
@@ -419,7 +456,7 @@ static void test_rootfs_entry_points_refuse_a_hostile_dir(void) {
     EosIma ima;
     EosBusybox bb;
 
-    if (!mkdtemp(dir)) { fprintf(stderr, "[SKIP] mkdtemp failed\n"); return; }
+    REQUIRE_TMPDIR(dir);
     n = snprintf(sentinel, sizeof sentinel, "%s/pwned", dir);
     CHECK(n > 0 && (size_t)n < sizeof sentinel);
     n = snprintf(hostile, sizeof hostile, "%s/`touch %s`", dir, sentinel);
@@ -467,7 +504,7 @@ static void test_selinux_label_reports_failure_when_it_cannot_label(void) {
     EosSelinux se;
     int fd;
 
-    if (!mkdtemp(dir)) { fprintf(stderr, "[SKIP] mkdtemp failed\n"); return; }
+    REQUIRE_TMPDIR(dir);
 
     /* SELinux on, no file_contexts: nothing to label with. This used to echo
      * a "skipping" line and return 0. */
@@ -481,7 +518,10 @@ static void test_selinux_label_reports_failure_when_it_cannot_label(void) {
 
     snprintf(fc, sizeof fc, "%s/file_contexts", dir);
     fd = open(fc, O_WRONLY | O_CREAT | O_EXCL, S_IRUSR | S_IWUSR);
-    if (fd >= 0) { (void)!write(fd, "/.*  --  system_u:object_r:default_t\n", 37); close(fd); }
+    CHECK(fd >= 0);
+    if (fd < 0) { rmdir(dir); return; }
+    CHECK(write(fd, "/.*  --  system_u:object_r:default_t\n", 37) == 37);
+    close(fd);
 
     eos_selinux_init(&se, EOS_SELINUX_ENFORCING);
     strncpy(se.file_contexts, fc, sizeof(se.file_contexts) - 1);
@@ -505,7 +545,7 @@ static void test_ima_install_reports_a_key_it_did_not_install(void) {
     char key[128], installed[192], policy[192], etc[128];
     EosIma ima;
 
-    if (!mkdtemp(dir)) { fprintf(stderr, "[SKIP] mkdtemp failed\n"); return; }
+    REQUIRE_TMPDIR(dir);
     /* These functions MKDIR("<rootfs>/etc/<x>") without creating <rootfs>/etc
      * first, so a bare mkdtemp() rootfs makes them fail at the fopen() long
      * before the step under test. The positive control below is what caught
@@ -555,10 +595,8 @@ static void test_busybox_install_reports_a_rootfs_it_did_not_build(void) {
     int fd;
     FILE *f;
 
-    if (!mkdtemp(src) || !mkdtemp(rootfs)) {
-        fprintf(stderr, "[SKIP] mkdtemp failed\n");
-        return;
-    }
+    REQUIRE_TMPDIR(src);
+    REQUIRE_TMPDIR(rootfs);
     snprintf(mk, sizeof mk, "%s/Makefile", src);
     snprintf(init, sizeof init, "%s/init", rootfs);
 
@@ -600,17 +638,15 @@ static void test_selinux_install_reports_a_policy_it_did_not_copy(void) {
     EosSelinux se;
     int fd;
 
-    if (!mkdtemp(pdir) || !mkdtemp(rootfs)) {
-        fprintf(stderr, "[SKIP] mkdtemp failed\n");
-        return;
-    }
+    REQUIRE_TMPDIR(pdir);
+    REQUIRE_TMPDIR(rootfs);
     snprintf(etc, sizeof etc, "%s/etc", rootfs);
     CHECK(mkdir(etc, 0700) == 0);
     snprintf(policy, sizeof policy, "%s/targeted", pdir);
     fd = open(policy, O_WRONLY | O_CREAT | O_EXCL, S_IRUSR | S_IWUSR);
     CHECK(fd >= 0);
     if (fd < 0) { rmdir(pdir); rmdir(rootfs); return; }
-    (void)!write(fd, "policy\n", 7);
+    CHECK(write(fd, "policy\n", 7) == 7);
     close(fd);
 
     eos_selinux_init(&se, EOS_SELINUX_ENFORCING);
@@ -654,16 +690,14 @@ static void test_selinux_install_guard_stops_a_reachable_injection(void) {
     EosSelinux se;
 
     remove(sentinel);                     /* in case an earlier run left one */
-    if (!mkdtemp(base) || !mkdtemp(pdir)) {
-        fprintf(stderr, "[SKIP] mkdtemp failed\n");
-        return;
-    }
+    REQUIRE_TMPDIR(base);
+    REQUIRE_TMPDIR(pdir);
     /* A real directory whose name contains the substitution. Creating it
      * takes no shell; only interpolating it into a command does. */
     n = snprintf(hostile, sizeof hostile, "%s/`touch %s`", base, sentinel);
     CHECK(n > 0 && (size_t)n < sizeof hostile);
     if (mkdir(hostile, 0700) != 0) {
-        fprintf(stderr, "[SKIP] cannot create the fixture directory\n");
+        FIXTURE_FAILED("mkdir of the directory whose name is the injection");
         rmdir(pdir); rmdir(base);
         return;
     }
@@ -673,7 +707,7 @@ static void test_selinux_install_guard_stops_a_reachable_injection(void) {
     snprintf(policy, sizeof policy, "%s/targeted", pdir);
     fd = open(policy, O_WRONLY | O_CREAT | O_EXCL, S_IRUSR | S_IWUSR);
     CHECK(fd >= 0);
-    if (fd >= 0) { (void)!write(fd, "policy\n", 7); close(fd); }
+    if (fd >= 0) { CHECK(write(fd, "policy\n", 7) == 7); close(fd); }
 
     eos_selinux_init(&se, EOS_SELINUX_ENFORCING);
     CHECK(eos_selinux_set_policy(&se, pdir, "targeted") == 0);
@@ -701,10 +735,10 @@ static void test_busybox_install_reports_an_init_it_could_not_write(void) {
     EosBusybox bb;
     int fd;
 
-    if (!mkdtemp(rootfs)) { fprintf(stderr, "[SKIP] mkdtemp failed\n"); return; }
+    REQUIRE_TMPDIR(rootfs);
     snprintf(init, sizeof init, "%s/init", rootfs);
     if (chmod(rootfs, S_IRUSR | S_IXUSR) != 0) {
-        fprintf(stderr, "[SKIP] chmod failed\n");
+        FIXTURE_FAILED("chmod 0500 of the rootfs fixture");
         rmdir(rootfs);
         return;
     }
@@ -741,7 +775,7 @@ static void test_busybox_install_refuses_null_arguments(void) {
     char init[128];
     EosBusybox bb;
 
-    if (!mkdtemp(rootfs)) { fprintf(stderr, "[SKIP] mkdtemp failed\n"); return; }
+    REQUIRE_TMPDIR(rootfs);
     snprintf(init, sizeof init, "%s/init", rootfs);
 
     CHECK(eos_busybox_install_to_rootfs(NULL, rootfs) == -1);
@@ -753,6 +787,62 @@ static void test_busybox_install_refuses_null_arguments(void) {
     remove(init);
     rmdir(rootfs);
     PASS_IF_CLEAN(f0, "busybox_install_to_rootfs refuses NULL arguments");
+}
+
+/* The change above only matters if REQUIRE_TMPDIR really does fail rather
+ * than skip, so this proves it on a mkdtemp() that cannot succeed. The
+ * template's parent does not exist, which fails with ENOENT for any user --
+ * a read-only directory would not do, because root writes there anyway and
+ * CI may run as root. The probe runs in a child so its recorded failure
+ * cannot leak into this process's count, and its stderr is captured so the
+ * assertion is on the message class: [FAIL], and not the old [SKIP]. */
+static void require_tmpdir_probe(void) {
+    char tmpl[] = "/nonexistent-eos-parent-3f9c1a/eos_XXXXXX";
+    REQUIRE_TMPDIR(tmpl);
+    /* Not reached: the macro must have returned above. */
+    fprintf(stderr, "[FAIL] REQUIRE_TMPDIR continued past a failed mkdtemp\n");
+    failures++;
+}
+
+static void test_require_tmpdir_fails_rather_than_skips(void) {
+    int before = failures;
+    int fds[2];
+    char out[512];
+    ssize_t n, total = 0;
+    int status = 0;
+    pid_t pid;
+
+    if (pipe(fds) != 0) { FIXTURE_FAILED("pipe"); return; }
+    pid = fork();
+    if (pid < 0) { FIXTURE_FAILED("fork"); close(fds[0]); close(fds[1]); return; }
+    if (pid == 0) {
+        int f0 = failures;
+        close(fds[0]);
+        dup2(fds[1], 2);
+        close(fds[1]);
+        require_tmpdir_probe();
+        /* exactly one failure recorded, and the probe stopped at the macro */
+        _exit(failures == f0 + 1 ? 0 : 1);
+    }
+    close(fds[1]);
+    /* Retry on EINTR: a signal between fork and exit must not turn a partial
+     * capture into a failed assertion in a test about failures being real. */
+    while (total < (ssize_t)sizeof out - 1) {
+        n = read(fds[0], out + total, sizeof out - 1 - (size_t)total);
+        if (n > 0) { total += n; continue; }
+        if (n < 0 && errno == EINTR) continue;
+        break;
+    }
+    out[total] = '\0';
+    close(fds[0]);
+    waitpid(pid, &status, 0);
+
+    CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+    CHECK(strstr(out, "[FAIL]") != NULL);
+    CHECK(strstr(out, "mkdtemp(tmpl)") != NULL);
+    CHECK(strstr(out, "[SKIP]") == NULL);
+    PASS_IF_CLEAN(before, "REQUIRE_TMPDIR counts a failed mkdtemp as a failure, "
+                          "reports it as [FAIL], and stops the test");
 }
 
 int main(void) {
@@ -774,6 +864,7 @@ int main(void) {
     test_busybox_install_reports_an_init_it_could_not_write();
     test_busybox_install_refuses_null_arguments();
     test_ordinary_paths_still_reach_the_shell();
+    test_require_tmpdir_fails_rather_than_skips();
 
     if (failures) {
         fprintf(stderr, "\n%d check(s) failed\n", failures);

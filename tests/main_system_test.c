@@ -167,7 +167,7 @@ int main(void)
     /* ---- Results ---- */
     PUTS("\n========================================\n");
     if (fail == 0) {
-        PUTS("  EoS kernel started\n");
+        PUTS("  EoS kernel API checks complete (scheduler not started)\n");
         PUTS("  ALL SYSTEM TESTS PASSED\n");
     } else {
         PUTS("  SOME TESTS FAILED\n");

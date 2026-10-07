@@ -66,8 +66,6 @@ NOT_REQUIRED = {
     "auto-assign.yml":
         "housekeeping; its only job is skipped on every fork pull request "
         "(if: head.repo.full_name == github.repository)",
-    "claude-code-review.yml":
-        "advisory; both jobs are gated on a label or a non-pull_request event",
     "book-build.yml":
         "documentation build; its pull_request trigger is filtered to "
         "paths: ['docs/book/**'], so on a pull request that touches nothing "

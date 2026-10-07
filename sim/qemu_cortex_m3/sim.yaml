@@ -1,0 +1,58 @@
+# EoS on QEMU's Cortex-M3 machine (TI Stellaris LM3S6965EVB).
+#
+# Consumed by `ebuild sim` and by the "QEMU Boot Test" job in
+# .github/workflows/build.yml. Paths are relative to the eos repository root.
+# Application sources are added by the caller.
+schema: 1
+qemu:
+  binary: qemu-system-arm
+  machine: lm3s6965evb
+  args: ["-nographic", "-semihosting"]
+cpu: cortex-m3
+# QEMU 4.2 to 8.x clock the LM3S6965 SysTick at 12 MHz. With this value one
+# kernel tick is about 1 ms of guest time, so eos_task_delay_ms() is roughly
+# wall-clock. It is not cycle accurate.
+sys_clock_hz: 12000000
+cflags:
+  - -mcpu=cortex-m3
+  - -mthumb
+  - -std=c11
+  - -Os
+  - -g
+  - -ffunction-sections
+  - -fdata-sections
+  - -fno-common
+  - -DEOS_NO_FPU
+  - -DEOS_SYS_CLOCK_HZ=12000000U
+includes:
+  - kernel/include
+  - include
+  - hal/include
+  - boards/stm32f407_discovery
+ldflags:
+  - -mcpu=cortex-m3
+  - -mthumb
+  - -Wl,--gc-sections
+  # newlib-nano: full newlib's printf needs more than 768 bytes of task stack
+  # with gcc 9, and more than the template's 1024 with the newer toolchain on
+  # ubuntu-latest, where the rtos template printed one line and then hung.
+  # nano's printf runs in a 512-byte task.
+  - -specs=nano.specs
+  - -specs=rdimon.specs
+  # Opens the semihosting console before the application's main() runs.
+  - -Wl,--wrap=main
+libs: ["-lc", "-lrdimon"]
+linker_script: boards/lm3s6965evb.ld
+sources:
+  - boards/startup_stm32f407.S
+  - kernel/src/task.c
+  - kernel/src/sync.c
+  - kernel/src/ipc.c
+  - kernel/src/mem/heap.c
+  - kernel/src/arch/arm_cm/nvic.c
+  - kernel/src/arch/arm_cm/port.c
+  - kernel/src/arch/arm_cm/systick.c
+  - kernel/src/arch/arm_cm/context_switch.S
+  - hal/src/hal_common.c
+  - hal/src/hal_rtos.c
+  - sim/qemu_cortex_m3/console.c

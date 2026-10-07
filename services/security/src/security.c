@@ -17,6 +17,20 @@ void eos_secureboot_init(EosSecureBoot *sb) {
 
 int eos_secureboot_verify_image(EosSecureBoot *sb, const char *image_path,
                                 const char *sig_path, const char *pubkey_path) {
+    /* Guard before the copies, not after. The check further down already
+     * refuses a missing pubkey_path, which is the author saying NULL is an
+     * input this function expects to see -- but the three strncpy() calls
+     * below ran first, and strncpy(dst, NULL, n) is undefined behaviour, so
+     * the caller got SIGSEGV instead of the EOS_BOOT_FAILED that guard was
+     * written to return. */
+    if (!sb) return -1;
+    if (!image_path || !sig_path || !pubkey_path) {
+        fprintf(stderr, "eos-security: secure boot: image, signature and "
+                        "public key paths are all required\n");
+        sb->status = EOS_BOOT_FAILED;
+        return -1;
+    }
+
     strncpy(sb->image_path, image_path, sizeof(sb->image_path) - 1);
     strncpy(sb->sig_path, sig_path, sizeof(sb->sig_path) - 1);
     strncpy(sb->pubkey_path, pubkey_path, sizeof(sb->pubkey_path) - 1);

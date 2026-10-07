@@ -7,7 +7,15 @@
 
 /* .eapp package format constants */
 #define EAPP_MAGIC          0x45415050  /* "EAPP" */
-#define EAPP_VERSION        1
+/* Format version 2. In version 1 the Ed25519 signature covered the binary
+ * payload alone, so every other header field (capabilities, version triple,
+ * name, package_id, arch list, resources offset/size) and the resources blob
+ * itself were unsigned and rewritable on a genuinely signed package (#162).
+ * In version 2 the signature is Ed25519 over the envelope digest computed by
+ * eos_pkg_envelope_digest(): SHA-256 over the header with the signature field
+ * zeroed, followed by the binary payload, followed by the resources blob.
+ * The verifier refuses any version other than this one. */
+#define EAPP_VERSION        2
 #define EAPP_MAX_NAME       64
 #define EAPP_MAX_PATH       256
 #define EAPP_MAX_PACKAGES   64
@@ -192,6 +200,20 @@ int  eos_pkg_set_trust_anchor(const uint8_t public_key[EAPP_PUBKEY_LEN]);
  * in services/ota.
  */
 const uint8_t *eos_pkg_trust_anchor(void);
+/**
+ * @brief SHA-256 digest of the v2 signature envelope: the header with the
+ *        signature field zeroed, followed by the binary payload, followed by
+ *        the resources blob (when present).
+ *
+ * The producer signs this digest with Ed25519; eos_pkg_verify() and
+ * eos_pkg_install() recompute it and check the header's signature against
+ * it. Signing the digest keeps the signed message at 32 bytes and lets the
+ * digest stream, so large payloads never need a second in-memory copy.
+ */
+void eos_pkg_envelope_digest(const eapp_header_t *hdr,
+                             const uint8_t *binary_data, uint32_t binary_size,
+                             const uint8_t *res_data, uint32_t res_size,
+                             uint8_t digest[EAPP_HASH_LEN]);
 int  eos_pkg_run(const eapp_db_t *db, const char *package_id, int argc, char **argv);
 int  eos_pkg_stop(const eapp_db_t *db, const char *package_id);
 int  eos_pkg_enable(eapp_db_t *db, const char *package_id);

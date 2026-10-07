@@ -1,0 +1,59 @@
+# EoS on QEMU's Cortex-M33 machine (Arm MPS2 with the AN505 FPGA image),
+# with the single-precision FPU enabled.
+#
+# This is the target that runs the FPU half of the context switch. The
+# Cortex-M3 target has no FPU, so PendSV's lazy-stacking path (vstmdb/vldmia
+# s16-s31) is compiled out there and was never executed in any simulation.
+# The core runs in secure state. The kernel needs nothing from TrustZone.
+#
+# Consumed by `ebuild sim --platform qemu_cortex_m33` and by
+# .github/workflows/build.yml. Paths are relative to the eos repository root.
+schema: 1
+qemu:
+  binary: qemu-system-arm
+  machine: mps2-an505
+  args: ["-nographic", "-semihosting"]
+cpu: cortex-m33
+# The MPS2 FPGA images clock the core and SysTick at 25 MHz in QEMU.
+sys_clock_hz: 25000000
+cflags:
+  - -mcpu=cortex-m33
+  - -mthumb
+  - -mfloat-abi=hard
+  - -mfpu=fpv5-sp-d16
+  - -std=c11
+  - -Os
+  - -g
+  - -ffunction-sections
+  - -fdata-sections
+  - -fno-common
+  - -DEOS_SYS_CLOCK_HZ=25000000U
+includes:
+  - kernel/include
+  - include
+  - hal/include
+  - boards/stm32f407_discovery
+ldflags:
+  - -mcpu=cortex-m33
+  - -mthumb
+  - -mfloat-abi=hard
+  - -mfpu=fpv5-sp-d16
+  - -Wl,--gc-sections
+  - -specs=nano.specs
+  - -specs=rdimon.specs
+  - -Wl,--wrap=main
+libs: ["-lc", "-lrdimon"]
+linker_script: boards/mps2_an505.ld
+sources:
+  - boards/startup_stm32f407.S
+  - kernel/src/task.c
+  - kernel/src/sync.c
+  - kernel/src/ipc.c
+  - kernel/src/mem/heap.c
+  - kernel/src/arch/arm_cm/nvic.c
+  - kernel/src/arch/arm_cm/port.c
+  - kernel/src/arch/arm_cm/systick.c
+  - kernel/src/arch/arm_cm/context_switch.S
+  - hal/src/hal_common.c
+  - hal/src/hal_rtos.c
+  - sim/qemu_cortex_m3/console.c

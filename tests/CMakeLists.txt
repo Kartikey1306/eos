@@ -51,7 +51,7 @@ endif()
 add_executable(test_board_configs test_board_configs.c)
 add_test(NAME test_board_configs COMMAND test_board_configs boards)
 set_tests_properties(test_board_configs PROPERTIES
-    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    WORKING_DIRECTORY ${EoS_SOURCE_DIR}
 )
 
 # --- test_os_adapter: OS abstraction layer and its adapters ---
@@ -63,6 +63,19 @@ add_test(NAME test_os_adapter COMMAND test_os_adapter)
 add_executable(test_config test_config.c)
 target_link_libraries(test_config PRIVATE eos_core)
 add_test(NAME test_config COMMAND test_config)
+
+# --- test_scheduler_cache_key: the cache key against oversized options ---
+# #includes core/src/scheduler.c to reach its static compute_cache_key(), the
+# same way test_ed25519_canonical_s.c reaches ed25519_verify.c's -- so that
+# source is not listed here. eos_core is still linked for the cache/graph
+# helpers the included unit calls: a static archive contributes only the
+# objects needed for still-undefined symbols, and scheduler.c.o is not one of
+# them because the test object already defines everything in it.
+add_executable(test_scheduler_cache_key test_scheduler_cache_key.c)
+# eos_backends supplies eos_backend_find_by_type(), which the included
+# scheduler.c calls from eos_scheduler_execute().
+target_link_libraries(test_scheduler_cache_key PRIVATE eos_backends eos_core)
+add_test(NAME test_scheduler_cache_key COMMAND test_scheduler_cache_key)
 
 # --- test_graph: Dependency graph ---
 add_executable(test_graph test_graph.c)
@@ -134,8 +147,8 @@ add_test(NAME test_crypto_ed25519_loworder COMMAND test_crypto_ed25519_loworder)
 # because the test object already defines everything in it.
 add_executable(test_ed25519_canonical_s test_ed25519_canonical_s.c)
 target_include_directories(test_ed25519_canonical_s PRIVATE
-    ${CMAKE_SOURCE_DIR}/services/crypto/include
-    ${CMAKE_SOURCE_DIR}/services/crypto/src)
+    ${EoS_SOURCE_DIR}/services/crypto/include
+    ${EoS_SOURCE_DIR}/services/crypto/src)
 target_link_libraries(test_ed25519_canonical_s PRIVATE eos_crypto)
 add_test(NAME test_ed25519_canonical_s COMMAND test_ed25519_canonical_s)
 
@@ -181,9 +194,14 @@ add_test(NAME test_e2e COMMAND test_e2e)
 # board header directory on the include path, which is why it never ran.
 add_executable(test_hal_stm32f4 test_hal_stm32f4.c)
 target_include_directories(test_hal_stm32f4 PRIVATE
-    ${CMAKE_SOURCE_DIR}/boards/stm32f407_discovery)
+    ${EoS_SOURCE_DIR}/boards/stm32f407_discovery)
 target_link_libraries(test_hal_stm32f4 PRIVATE eos_hal)
 add_test(NAME test_hal_stm32f4 COMMAND test_hal_stm32f4)
+
+# --- test_shell_cmd: the checked command builder, and every backend through it ---
+add_executable(test_shell_cmd test_shell_cmd.c)
+target_link_libraries(test_shell_cmd PRIVATE eos_backends eos_core)
+add_test(NAME test_shell_cmd COMMAND test_shell_cmd)
 
 # --- test_firmware: firmware build graph over the backend registry ---
 # Could not link while backends/ was outside the build: eos_systems
@@ -193,6 +211,13 @@ add_test(NAME test_hal_stm32f4 COMMAND test_hal_stm32f4)
 add_executable(test_firmware test_firmware.c)
 target_link_libraries(test_firmware PRIVATE eos_systems eos_core)
 add_test(NAME test_firmware COMMAND test_firmware)
+
+# --- test_backend_install: install backends must not report EOS_OK when the
+# copy moved nothing (issue #166). Negative tests fail against the old
+# "|| true" tails; positive tests pin the artifact contracts. ---
+add_executable(test_backend_install test_backend_install.c)
+target_link_libraries(test_backend_install PRIVATE eos_backends eos_core)
+add_test(NAME test_backend_install COMMAND test_backend_install)
 
 # --- test_security: Keystore, ACL ---
 add_executable(test_security test_security.c)
@@ -369,6 +394,11 @@ endif()
 add_executable(test_pkg_fetch test_pkg_fetch.c)
 target_link_libraries(test_pkg_fetch PRIVATE eos_pkg eos_core)
 add_test(NAME test_pkg_fetch COMMAND test_pkg_fetch)
+
+# --- test_exec_argv: argv-form exec never invokes a shell (issue #172) ---
+add_executable(test_exec_argv test_exec_argv.c ../cmd/eos/exec_argv.c)
+target_include_directories(test_exec_argv PRIVATE ../cmd/eos)
+add_test(NAME test_exec_argv COMMAND test_exec_argv)
 
 # --- Fuzz targets ---
 # Opt-in (-DEOS_ENABLE_FUZZING=ON, Clang only); the subdirectory guards itself.

@@ -60,8 +60,8 @@ endif()
 
 # Global include for eos_config.h and product profiles
 include_directories(
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${EoS_SOURCE_DIR}/include
+    ${EoS_SOURCE_DIR}
 )
 
 # ====================================================================
@@ -93,8 +93,8 @@ else()
 endif()
 
 target_include_directories(eos_hal PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/hal/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${EoS_SOURCE_DIR}/hal/include
+    ${EoS_SOURCE_DIR}/include
 )
 
 # ====================================================================
@@ -109,8 +109,8 @@ add_library(eos_kernel STATIC
 )
 
 target_include_directories(eos_kernel PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/kernel/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${EoS_SOURCE_DIR}/kernel/include
+    ${EoS_SOURCE_DIR}/include
 )
 
 target_link_libraries(eos_kernel PUBLIC eos_hal)
@@ -123,7 +123,7 @@ add_library(eos_drivers STATIC
 )
 
 target_include_directories(eos_drivers PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/drivers/include
+    ${EoS_SOURCE_DIR}/drivers/include
 )
 
 target_link_libraries(eos_drivers PUBLIC eos_hal)
@@ -200,8 +200,8 @@ add_library(eos_power STATIC
 )
 
 target_include_directories(eos_power PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/power/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${EoS_SOURCE_DIR}/power/include
+    ${EoS_SOURCE_DIR}/include
 )
 
 target_link_libraries(eos_power PUBLIC eos_hal)
@@ -227,8 +227,8 @@ if(NOT CMAKE_CROSSCOMPILING AND UNIX)
 endif()
 
 target_include_directories(eos_net PUBLIC
-    ${CMAKE_CURRENT_SOURCE_DIR}/net/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${EoS_SOURCE_DIR}/net/include
+    ${EoS_SOURCE_DIR}/include
 )
 
 target_link_libraries(eos_net PUBLIC eos_hal)
@@ -247,8 +247,8 @@ endif()
 find_package(Doxygen QUIET)
 if(DOXYGEN_FOUND)
     add_custom_target(docs
-        COMMAND ${DOXYGEN_EXECUTABLE} ${CMAKE_SOURCE_DIR}/Doxyfile
-        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        COMMAND ${DOXYGEN_EXECUTABLE} ${EoS_SOURCE_DIR}/Doxyfile
+        WORKING_DIRECTORY ${EoS_SOURCE_DIR}
         COMMENT "Generating API documentation with Doxygen"
         VERBATIM
     )

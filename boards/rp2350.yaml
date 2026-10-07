@@ -1,0 +1,44 @@
+# EoS Board: Raspberry Pi RP2350A (Raspberry Pi Pico 2)
+#
+# Dual Cortex-M33F @ 150 MHz (single-precision FPU, DSP extensions, TrustZone),
+# or dual Hazard3 RISC-V — boot-selectable, one pair at a time. EoS targets the
+# Cortex-M33 pair. 520 KiB on-chip SRAM in 10 banks. No on-chip flash on the
+# RP2350A itself; the Pico 2 board provides 4 MiB external QSPI flash with
+# execute-in-place (XIP) at 0x10000000.
+#
+# PIO: 3 blocks x 4 state machines (12 total), 32 instructions per block —
+# the RP2350's signature peripheral (not in the board-schema peripheral enum,
+# noted here). Also on-chip: HSTX, 32 spinlocks, TRNG, SHA-256 accelerator,
+# 8 KiB OTP, secure boot via mask ROM.
+#
+# Sources: RP2350 datasheet ch.1; https://en.wikipedia.org/wiki/RP2350
+board:
+  name: rp2350
+  mcu: RP2350A
+  family: RP2350
+  arch: arm
+  core: cortex-m33
+  vendor: Raspberry Pi
+  clock_hz: 150000000
+  cores: 2
+  memory:
+    ram: 532480
+    ram_base: "0x20000000"
+    flash_base: "0x10000000"
+  peripherals:
+    - {name: UART0, type: uart, bus: apb}
+    - {name: UART1, type: uart, bus: apb}
+    - {name: SPI0, type: spi, bus: apb}
+    - {name: SPI1, type: spi, bus: apb}
+    - {name: I2C0, type: i2c, bus: apb}
+    - {name: I2C1, type: i2c, bus: apb}
+    - {name: GPIO, type: gpio, count: 30}
+    - {name: ADC, type: adc, bus: apb, channels: 4, bits: 12}
+    - {name: PWM, type: pwm, bus: apb, slices: 12, channels: 24}
+    - {name: USB, type: usb, speed: full}
+    - {name: DMA, type: dma, channels: 16, bus: ahb}
+    - {name: WDT, type: watchdog, bus: apb}
+    - {name: RTC, type: rtc, bus: apb}
+    - {name: TIMER0, type: timer, bus: apb}
+  features: [fpu, dsp, mpu, trustzone, crypto_accelerator, dual_core]
+  toolchain: arm-none-eabi
